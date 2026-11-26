@@ -1,0 +1,23 @@
+{
+  "name": "extension",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "wxt prepare && tsc --noEmit && oxlint && oxfmt --check && vitest run",
+    "format": "oxfmt",
+    "build": "wxt build",
+    "dev": "wxt"
+  },
+  "dependencies": {
+    "firebase": "^12.19.0"
+  },
+  "devDependencies": {
+    "@caffelatte23/oxc-config": "0.1.0",
+    "oxfmt": "^0.80.0",
+    "oxlint": "^1.95.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12",
+    "wxt": "^0.21.5"
+  }
+}
