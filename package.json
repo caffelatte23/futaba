@@ -1,13 +1,10 @@
 {
   "name": "futaba",
   "private": true,
-  "packageManager": "pnpm@10.34.5",
+  "packageManager": "pnpm@12.23.0",
   "scripts": {
     "check": "pnpm -r --if-present check && node scripts/gradlew.mjs check",
     "format": "pnpm -r --if-present format && node scripts/gradlew.mjs spotlessApply",
     "prepare": "lefthook install"
-  },
-  "devDependencies": {
-    "lefthook": "^1.0.0"
   }
 }
