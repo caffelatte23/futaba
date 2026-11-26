@@ -1,0 +1,13 @@
+{
+  "name": "futaba",
+  "private": true,
+  "packageManager": "pnpm@10.34.5",
+  "scripts": {
+    "check": "pnpm -r --if-present check",
+    "format": "pnpm -r --if-present format",
+    "prepare": "lefthook install"
+  },
+  "devDependencies": {
+    "lefthook": "^1.0.0"
+  }
+}
