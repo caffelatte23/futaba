@@ -66,13 +66,26 @@ detekt {
     buildUponDefaultConfig = true
     config.setFrom(rootProject.file("config/detekt/detekt.yml"))
     // No baseline on purpose: every finding must be fixed.
-    source.setFrom("src/main/kotlin", "src/test/kotlin", "src/androidTest/kotlin")
 }
 
-// detekt 1.23 does not create type-resolution tasks for AGP 9, so wire the classpath by hand.
-// Rules that need types (ForbiddenMethodCall for Color literals) are silently skipped without it.
-tasks.withType<io.gitlab.arturbosch.detekt.Detekt>().configureEach {
-    val compile = tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileDebugKotlin")
+// detekt 1.23 creates no type-resolution tasks for AGP 9, so wire each source set to its own
+// compile classpath by hand. Without a classpath, type-based rules (ForbiddenMethodCall for Color
+// literals) are silently skipped.
+// Source set -> Kotlin compile task whose classpath matches it (main: debug; test: debug unit test).
+val detektSourceSets =
+    mapOf(
+        "main" to "compileDebugKotlin",
+        "test" to "compileDebugUnitTestKotlin",
+        "androidTest" to "compileDebugAndroidTestKotlin",
+    )
+
+fun io.gitlab.arturbosch.detekt.Detekt.wire(
+    sourceSet: String,
+    compileTask: String,
+) {
+    val compile = tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>(compileTask)
+    setSource(files("src/$sourceSet/kotlin", "src/$sourceSet/java"))
+    include("**/*.kt", "**/*.kts")
     dependsOn(compile)
     classpath.setFrom(
         compile.map { it.libraries },
@@ -80,6 +93,17 @@ tasks.withType<io.gitlab.arturbosch.detekt.Detekt>().configureEach {
         androidComponents.sdkComponents.bootClasspath,
     )
     jvmTarget = "17"
+}
+
+tasks.named<io.gitlab.arturbosch.detekt.Detekt>("detekt") { wire("main", detektSourceSets.getValue("main")) }
+detektSourceSets.filterKeys { it != "main" }.forEach { (sourceSet, compileTask) ->
+    val task =
+        tasks.register<io.gitlab.arturbosch.detekt.Detekt>("detekt${sourceSet.replaceFirstChar { it.uppercase() }}") {
+            buildUponDefaultConfig = true
+            config.setFrom(rootProject.file("config/detekt/detekt.yml"))
+            wire(sourceSet, compileTask)
+        }
+    tasks.named("check") { dependsOn(task) }
 }
 
 dependencies {

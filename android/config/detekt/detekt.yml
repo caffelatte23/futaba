@@ -13,6 +13,8 @@ style:
     excludes:
       - '**/core/designsystem/**'
     methods:
+      - value: 'androidx.compose.ui.graphics.Color.<init>(kotlin.ULong)'
+        reason: 'Define colors in core/designsystem (FutabaColors) only.'
       - value: 'androidx.compose.ui.graphics.Color(kotlin.Long)'
         reason: 'Define colors in core/designsystem (FutabaColors) only.'
       - value: 'androidx.compose.ui.graphics.Color(kotlin.Int)'
