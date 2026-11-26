@@ -31,7 +31,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Flip to true locally to use the Firebase emulator (host 10.0.2.2).
+            buildConfigField("boolean", "USE_EMULATOR", "false")
+        }
         release {
+            buildConfigField("boolean", "USE_EMULATOR", "false")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
@@ -40,6 +45,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     compileOptions {
