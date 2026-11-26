@@ -8,7 +8,9 @@ if (!existsSync(cwd)) {
   process.exit(0);
 }
 const win = process.platform === "win32";
-const r = spawnSync(win ? "gradlew.bat" : "./gradlew", process.argv.slice(2), {
+const quote = (a) => `"${a.replaceAll("\"", "\"\"")}"`;
+const args = process.argv.slice(2);
+const r = spawnSync(win ? ".\\gradlew.bat" : "./gradlew", win ? args.map(quote) : args, {
   cwd,
   stdio: "inherit",
   shell: win, // .bat needs a shell on Windows
