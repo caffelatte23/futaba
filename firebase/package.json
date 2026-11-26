@@ -1,0 +1,15 @@
+{
+  "name": "firebase",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "firebase emulators:exec --only firestore --project demo-futaba \"vitest run\""
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.0",
+    "firebase": "^12.0.0",
+    "firebase-tools": "^15.37.0",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.0"
+  }
+}
