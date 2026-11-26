@@ -12,6 +12,7 @@ import javax.inject.Singleton
 private const val EMULATOR_HOST = "10.0.2.2"
 private const val FIRESTORE_PORT = 8080
 private const val AUTH_PORT = 9099
+private val EMULATOR = BuildConfig.DEBUG && BuildConfig.USE_EMULATOR
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -20,13 +21,13 @@ object FirebaseModule {
     @Singleton
     fun provideAuth(): FirebaseAuth =
         FirebaseAuth.getInstance().apply {
-            if (BuildConfig.USE_EMULATOR) useEmulator(EMULATOR_HOST, AUTH_PORT)
+            if (EMULATOR) useEmulator(EMULATOR_HOST, AUTH_PORT)
         }
 
     @Provides
     @Singleton
     fun provideFirestore(): FirebaseFirestore =
         FirebaseFirestore.getInstance().apply {
-            if (BuildConfig.USE_EMULATOR) useEmulator(EMULATOR_HOST, FIRESTORE_PORT)
+            if (EMULATOR) useEmulator(EMULATOR_HOST, FIRESTORE_PORT)
         }
 }

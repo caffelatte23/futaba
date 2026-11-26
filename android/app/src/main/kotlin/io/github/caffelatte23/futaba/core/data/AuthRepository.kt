@@ -4,6 +4,8 @@ import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -14,6 +16,7 @@ class AuthRepository
     constructor(
         private val auth: FirebaseAuth,
     ) {
+        private val signInLock = Mutex()
         private val _uid = MutableStateFlow(auth.currentUser?.uid)
         val uid: StateFlow<String?> = _uid
 
@@ -29,9 +32,14 @@ class AuthRepository
          * Suppressions: Firebase throws varied exceptions (any failure means "no uid yet");
          * detekt wrongly flags suspend.
          */
-        @Suppress("TooGenericExceptionCaught", "RedundantSuspendModifier")
         suspend fun ensureSignedIn(): String? =
-            auth.currentUser?.uid ?: try {
+            auth.currentUser?.uid ?: signInLock.withLock {
+                auth.currentUser?.uid ?: signInAnonymously()
+            }
+
+        @Suppress("TooGenericExceptionCaught", "RedundantSuspendModifier") // see ensureSignedIn
+        private suspend fun signInAnonymously(): String? =
+            try {
                 auth
                     .signInAnonymously()
                     .await()
