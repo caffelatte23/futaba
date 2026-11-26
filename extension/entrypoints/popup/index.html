@@ -8,6 +8,10 @@
   <body>
     <main>
       <button type="button" id="sign-in" disabled>Googleでログイン</button>
+      <form id="capture" hidden>
+        <textarea id="note" aria-label="メモ" rows="5"></textarea>
+        <button id="save" type="submit" disabled>追加</button>
+      </form>
       <p id="status" role="status">ログイン状態を確認しています…</p>
     </main>
     <script type="module" src="./main.ts"></script>

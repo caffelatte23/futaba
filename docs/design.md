@@ -141,7 +141,7 @@ service cloud.firestore {
 ### ブラウザ拡張（v1の範囲）
 
 - ポップアップで書く（入力欄のみ、送信で1件追加）
-- 右クリックメニュー「Futabaに追加」で選択中テキスト（＋ページURL）を1件追加
+- 右クリックメニュー「Futabaに追加」で選択中テキストとページURLを1件追加。ページ上で選択せずに実行するとページURLを追加する。未ログイン時は入力を保留し、ログイン後にポップアップの入力欄へ表示する
 - ログイン: `chrome.identity.launchWebAuthFlow` で Google ID トークン → `signInWithCredential`。Androidでリンク済みのGoogleアカウントなら同じuid
 - 一覧表示は v1 では作らない
 

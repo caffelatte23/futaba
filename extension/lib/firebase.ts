@@ -1,11 +1,11 @@
-import { initializeApp } from 'firebase/app';
+import { initializeApp, type FirebaseApp } from 'firebase/app';
 import {
   getAuth,
   GoogleAuthProvider,
   signInWithCredential,
+  type Auth,
   type User,
 } from 'firebase/auth/web-extension';
-import { getFirestore, type Firestore } from 'firebase/firestore';
 import { browser } from 'wxt/browser';
 
 import { buildGoogleOAuthUrl, readGoogleIdToken } from './google-oauth';
@@ -18,22 +18,31 @@ const config = {
 };
 const clientId = import.meta.env.WXT_GOOGLE_OAUTH_CLIENT_ID;
 
-const app = initializeApp(config);
-export const db: Firestore = getFirestore(app);
+let app: FirebaseApp | undefined;
+let auth: Auth | undefined;
 
-function configuredAuth() {
+export class FirebaseConfigError extends Error {}
+
+export function firebaseApp(): FirebaseApp {
   if (
     !config.apiKey ||
     !config.authDomain ||
     !config.projectId ||
     !config.appId
   ) {
-    throw new Error('Firebase Web の設定が必要です。');
+    throw new FirebaseConfigError('Firebase Web の設定が必要です。');
   }
+  return (app ??= initializeApp(config));
+}
+
+function configuredAuth() {
+  const app = firebaseApp();
   if (!clientId) {
-    throw new Error('Google OAuth クライアント ID の設定が必要です。');
+    throw new FirebaseConfigError(
+      'Google OAuth クライアント ID の設定が必要です。',
+    );
   }
-  return { auth: getAuth(app), clientId };
+  return { auth: (auth ??= getAuth(app)), clientId };
 }
 
 export async function signIn(): Promise<User> {

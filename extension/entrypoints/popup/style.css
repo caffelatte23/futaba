@@ -34,10 +34,22 @@ button:disabled {
   cursor: default;
 }
 
+textarea {
+  box-sizing: border-box;
+  inline-size: 100%;
+  margin-block-end: 0.5rem;
+  padding: 0.5rem;
+  border: 1px solid currentcolor;
+  border-radius: 0.5rem;
+  color: inherit;
+  font: inherit;
+  resize: vertical;
+}
+
 p {
   margin: 0;
 }
 
-button:not([hidden]) + p:not(:empty) {
+main > :not([hidden]) ~ p:not(:empty) {
   margin-block-start: 0.5rem;
 }
