@@ -160,6 +160,7 @@ dependencies {
     androidTestImplementation(libs.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.junit)
+    androidTestImplementation(libs.truth)
 
     detektPlugins(libs.detekt.compose.rules)
 }
