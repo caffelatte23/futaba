@@ -7,11 +7,14 @@ import com.google.firebase.FirebaseOptions
 import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.Source
 import io.github.caffelatte23.futaba.core.domain.filterNotes
 import io.github.caffelatte23.futaba.core.model.NoteFilter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
@@ -137,7 +140,7 @@ class FirestoreNoteRepositoryTest {
     @Test
     fun updateTextRightAfterSetLabelsKeepsManualLabel() {
         val id = repo.add("t #Foo")
-        val manual = repo.createLabel("Manual")
+        val manual = runBlocking { repo.createLabel("Manual") }
         repo.setLabels(listOf(id), add = listOf(manual), remove = emptyList())
         repo.updateText(id, "t2 #Foo")
 
@@ -165,6 +168,69 @@ class FirestoreNoteRepositoryTest {
         val labels = repo.labels.await { it.isNotEmpty() }
         assertThat(labels.map { it.name }).containsExactly("Fresh")
         assertThat(note.labelIds).containsExactly(labels.single().id)
+    }
+
+    @Test
+    fun concurrentCreateLabelReturnsOneId() {
+        val ids = runBlocking { listOf(async { repo.createLabel("X") }, async { repo.createLabel("x") }).awaitAll() }
+
+        assertThat(ids.toSet()).hasSize(1)
+        assertThat(repo.labels.await { it.isNotEmpty() }.map { it.id }).containsExactly(ids.first())
+    }
+
+    @Test
+    fun restoreThenPurgeKeepsRestoredNote() {
+        val now = Instant.now()
+        val id = repo.add("restored")
+        repo.notes.await { it.size == 1 }
+        val ref =
+            db
+                .collection("users")
+                .document(auth.currentUser!!.uid)
+                .collection("notes")
+                .document(id)
+        runBlocking {
+            ref.update("deletedAt", now.minus(Duration.ofDays(31)).toTimestamp()).await()
+            repo.restore(listOf(id))
+            repo.purgeTrash(now)
+        }
+
+        val snapshot = runBlocking { ref.get(Source.CACHE).await() }
+        assertThat(snapshot.exists()).isTrue()
+        assertThat(snapshot.get("deletedAt")).isNull()
+    }
+
+    @Test
+    fun addDropsUnknownExtraLabelId() {
+        repo.add("x", listOf("bogus"))
+
+        assertThat(
+            repo.notes
+                .await { it.isNotEmpty() }
+                .single()
+                .labelIds,
+        ).isEmpty()
+    }
+
+    @Test
+    fun rapidWritesWhileOfflineKeepManualLabel() {
+        runBlocking { db.disableNetwork().await() }
+        try {
+            val id = repo.add("t #Foo")
+            val manual = runBlocking { repo.createLabel("M") }
+            repo.setLabels(listOf(id), add = listOf(manual), remove = emptyList())
+            repo.updateText(id, "t2 #Foo")
+
+            val note = repo.notes.await { n -> n.singleOrNull()?.text == "t2 #Foo" }.single()
+            val names =
+                repo.labels
+                    .await { it.size == 2 }
+                    .filter { it.id in note.labelIds }
+                    .map { it.name }
+            assertThat(names).containsExactly("Foo", "M")
+        } finally {
+            runBlocking { db.enableNetwork().await() }
+        }
     }
 
     @Test

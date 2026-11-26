@@ -56,8 +56,12 @@ interface NoteRepository {
     /** Permanently deletes notes trashed more than 30 days before [now]. */
     suspend fun purgeTrash(now: Instant)
 
-    /** Returns the id of the existing label with that name (case-insensitive) or of a new one. */
-    fun createLabel(name: String): String
+    /**
+     * Returns the id of the existing label with that name (case-insensitive) or of the one it just created.
+     * Suspends only until the write is queued and resolved, not for the server. Throws [IllegalStateException]
+     * when nobody is signed in.
+     */
+    suspend fun createLabel(name: String): String
 
     fun renameLabel(
         id: String,

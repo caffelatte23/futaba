@@ -27,11 +27,13 @@ class FakeNoteRepository(
     override val labels: Flow<List<Label>> = labelState.map { it.sortedBy(Label::order) }
     override val pendingWrites: Flow<Int> = flowOf(0)
 
+    private fun isKnown(labelId: String) = labelState.value.any { it.id == labelId }
+
     private fun newId() = "id${nextId++}"
 
     private fun resolveIds(text: String): List<String> {
         val resolved = resolveLabels(parseHashtags(text), labelState.value)
-        return resolved.existingIds + resolved.newNames.map(::createLabel)
+        return resolved.existingIds + resolved.newNames.map(::createLabelNow)
     }
 
     private fun mapNotes(
@@ -45,7 +47,7 @@ class FakeNoteRepository(
     ): String {
         val id = newId()
         val now = clock()
-        val labelIds = (resolveIds(text) + extraLabelIds).distinct()
+        val labelIds = (resolveIds(text) + extraLabelIds.filter(::isKnown)).distinct()
         noteState.update { listOf(Note(id, text, labelIds, false, now, now, null)) + it }
         return id
     }
@@ -90,7 +92,9 @@ class FakeNoteRepository(
         noteState.update { list -> list.filterNot { n -> n.deletedAt?.isBefore(limit) == true } }
     }
 
-    override fun createLabel(name: String): String {
+    override suspend fun createLabel(name: String): String = createLabelNow(name)
+
+    private fun createLabelNow(name: String): String {
         labelState.value.firstOrNull { it.name.equals(name, ignoreCase = true) }?.let { return it.id }
         val id = newId()
         val order = (labelState.value.maxOfOrNull(Label::order) ?: -1) + 1
