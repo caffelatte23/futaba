@@ -1,0 +1,43 @@
+:root {
+  font:
+    1rem/1.5 'IBM Plex Sans JP',
+    system-ui,
+    sans-serif;
+  color: #161616;
+  background: #f4f4f0;
+}
+
+body {
+  min-inline-size: 16rem;
+  max-inline-size: 22rem;
+  margin: 0;
+  padding: 1rem;
+}
+
+button {
+  padding: 0.5rem 1rem;
+  border: 1px solid currentcolor;
+  border-radius: 0.5rem;
+  background: #ffc83d;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+button:focus-visible {
+  outline: 2px solid currentcolor;
+  outline-offset: 3px;
+}
+
+button:disabled {
+  opacity: 0.65;
+  cursor: default;
+}
+
+p {
+  margin: 0;
+}
+
+button:not([hidden]) + p:not(:empty) {
+  margin-block-start: 0.5rem;
+}

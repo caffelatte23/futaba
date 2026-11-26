@@ -7,6 +7,8 @@ local.properties
 google-services.json
 extension/.output/
 extension/.wxt/
+extension/.env
+extension/.keys/
 *-debug.log
 .idea/
 .superpowers/
