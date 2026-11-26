@@ -43,8 +43,8 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
 
     lint {
@@ -56,7 +56,7 @@ android {
 }
 
 kotlin {
-    jvmToolchain(17)
+    jvmToolchain(21)
     compilerOptions {
         allWarningsAsErrors = true
     }
@@ -92,7 +92,7 @@ fun io.gitlab.arturbosch.detekt.Detekt.wire(
         compile.flatMap { it.destinationDirectory },
         androidComponents.sdkComponents.bootClasspath,
     )
-    jvmTarget = "17"
+    jvmTarget = "21"
 }
 
 tasks.named<io.gitlab.arturbosch.detekt.Detekt>("detekt") { wire("main", detektSourceSets.getValue("main")) }
