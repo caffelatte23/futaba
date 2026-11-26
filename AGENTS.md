@@ -11,6 +11,7 @@
 ## 検査（CI の代わり）
 
 - 完了と言う前に `pnpm check` を通す（lefthook の pre-push でも走る）。Firestore を触った Task は `pnpm check:device` も
+- 開発ツールは `mise.toml` で固定（`mise install`）。グローバルインストールや npx に頼らない
 - `git commit/push --no-verify` で検査を飛ばさない
 - GitHub Actions は使わない（`.github/workflows/` を作らない）
 - 静的に検査できる規約（書式・命名・Compose の作法・未使用・アクセシビリティ・型）はこのファイルに書かず、ktlint / detekt / Android Lint / oxlint / tsc の設定に足す。ここには検査できないことだけを書く
