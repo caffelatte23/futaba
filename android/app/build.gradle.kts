@@ -68,6 +68,12 @@ kotlin {
     }
 }
 
+val specDir = rootProject.layout.projectDirectory.dir("../spec")
+tasks.withType<Test>().configureEach {
+    inputs.dir(specDir).withPathSensitivity(PathSensitivity.RELATIVE)
+    systemProperty("specDir", specDir.asFile.absolutePath)
+}
+
 detekt {
     buildUponDefaultConfig = true
     config.setFrom(rootProject.file("config/detekt/detekt.yml"))
