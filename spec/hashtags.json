@@ -1,0 +1,11 @@
+[
+  {"text": "アプリ案 #仕事 #個人", "tags": ["仕事", "個人"]},
+  {"text": "＃全角も", "tags": ["全角も"]},
+  {"text": "https://example.com/#anchor", "tags": []},
+  {"text": "色#123 と &#123;", "tags": []},
+  {"text": "#a #A #a", "tags": ["a"]},
+  {"text": "# だけ", "tags": []},
+  {"text": "(#括弧) と #末尾。", "tags": ["括弧", "末尾"]},
+  {"text": "改行\n#次の行", "tags": ["次の行"]},
+  {"text": "#snake_case #kebab-case", "tags": ["snake_case", "kebab-case"]}
+]
