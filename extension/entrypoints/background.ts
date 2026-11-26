@@ -1,8 +1,34 @@
+import {
+  appendPendingCapture,
+  buildCaptureText,
+  remainingPendingCapture,
+} from '../lib/capture-text';
 import { currentUser, signIn } from '../lib/firebase';
 import { addNote } from '../lib/notes';
 import { pendingCapture } from '../lib/pending-capture';
 
 const captureMenuId = 'futaba:add-note';
+let pendingCaptureUpdate = Promise.resolve();
+
+function updatePendingCapture(
+  update: (existing: string | null) => string | null,
+): Promise<void> {
+  const result = pendingCaptureUpdate.then(async () => {
+    const existing = await pendingCapture.getValue();
+    const next = update(existing);
+    if (next === existing) {
+      return;
+    }
+    if (next === null) {
+      await pendingCapture.removeValue();
+    } else {
+      await pendingCapture.setValue(next);
+    }
+  });
+  // Leave the queue usable after a storage error. The caller handles the error.
+  pendingCaptureUpdate = result.catch(() => {});
+  return result;
+}
 
 async function captureFromMenu(text: string): Promise<void> {
   try {
@@ -14,7 +40,9 @@ async function captureFromMenu(text: string): Promise<void> {
     console.error('Futaba context menu capture failed.', error);
   }
 
-  await pendingCapture.setValue(text);
+  await updatePendingCapture((existing) =>
+    appendPendingCapture(existing, text),
+  );
   try {
     await browser.action.openPopup?.();
   } catch (error) {
@@ -26,9 +54,9 @@ async function saveFromPopup(text: string, pending: unknown): Promise<void> {
   await addNote(text);
   if (typeof pending === 'string') {
     try {
-      if ((await pendingCapture.getValue()) === pending) {
-        await pendingCapture.removeValue();
-      }
+      await updatePendingCapture((existing) =>
+        remainingPendingCapture(existing, pending),
+      );
     } catch (error) {
       console.error('Futaba could not clear the saved capture.', error);
     }
@@ -59,14 +87,18 @@ export default defineBackground(() => {
   });
 
   browser.contextMenus.onClicked.addListener(
-    ({ menuItemId, selectionText, pageUrl }) => {
-      if (menuItemId === captureMenuId && pageUrl) {
-        void captureFromMenu(`${selectionText ?? ''}\n${pageUrl}`).catch(
-          (error: unknown) => {
-            console.error('Futaba could not store the pending capture.', error);
-          },
-        );
+    ({ menuItemId, selectionText, pageUrl }, tab) => {
+      if (menuItemId !== captureMenuId) {
+        return;
       }
+      const text = buildCaptureText(selectionText, pageUrl || tab?.url);
+      if (!text) {
+        console.warn('Futaba capture requires selected text or a page URL.');
+        return;
+      }
+      void captureFromMenu(text).catch((error: unknown) => {
+        console.error('Futaba could not store the pending capture.', error);
+      });
     },
   );
 
