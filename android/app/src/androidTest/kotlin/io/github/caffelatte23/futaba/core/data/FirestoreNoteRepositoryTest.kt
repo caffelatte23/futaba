@@ -30,6 +30,8 @@ import java.time.Instant
 private const val HOST = "10.0.2.2"
 private const val PROJECT = "demo-futaba"
 private const val TIMEOUT_MS = 15_000L
+private const val HTTP_TIMEOUT_MS = 5_000
+private val HTTP_OK = 200..299
 
 /**
  * Runs against the Firebase emulators (`pnpm check:device`) with a dedicated `demo-futaba` FirebaseApp, so the real
@@ -122,6 +124,50 @@ class FirestoreNoteRepositoryTest {
     }
 
     @Test
+    fun backToBackAddsShareOneLabel() {
+        repo.add("a #Idea")
+        repo.add("b #idea")
+
+        val notes = repo.notes.await { it.size == 2 }
+        val labels = repo.labels.await { it.isNotEmpty() }
+        assertThat(labels).hasSize(1)
+        assertThat(notes.flatMap { it.labelIds }).containsExactly(labels.single().id, labels.single().id)
+    }
+
+    @Test
+    fun updateTextRightAfterSetLabelsKeepsManualLabel() {
+        val id = repo.add("t #Foo")
+        val manual = repo.createLabel("Manual")
+        repo.setLabels(listOf(id), add = listOf(manual), remove = emptyList())
+        repo.updateText(id, "t2 #Foo")
+
+        val note = repo.notes.await { n -> n.singleOrNull()?.text == "t2 #Foo" }.single()
+        val names =
+            repo.labels
+                .await { it.size == 2 }
+                .filter { it.id in note.labelIds }
+                .map { it.name }
+        assertThat(names).containsExactly("Foo", "Manual")
+    }
+
+    @Test
+    fun switchingUserDoesNotLeakPreviousAccount() {
+        repo.add("mine #Old")
+        repo.notes.await { it.size == 1 }
+        runBlocking {
+            auth.signOut()
+            auth.signInAnonymously().await()
+        }
+        repo.notes.await { it.isEmpty() }
+        repo.add("new #Fresh")
+
+        val note = repo.notes.await { it.size == 1 }.single()
+        val labels = repo.labels.await { it.isNotEmpty() }
+        assertThat(labels.map { it.name }).containsExactly("Fresh")
+        assertThat(note.labelIds).containsExactly(labels.single().id)
+    }
+
+    @Test
     fun deleteLabelDetachesFromNotes() {
         repo.add("idea #foo")
         val label = repo.labels.await { it.size == 1 }.single()
@@ -164,7 +210,9 @@ class FirestoreNoteRepositoryTest {
             val url = URL("http://$HOST:8080/emulator/v1/projects/$PROJECT/databases/(default)/documents")
             (url.openConnection() as HttpURLConnection).run {
                 requestMethod = "DELETE"
-                responseCode
+                connectTimeout = HTTP_TIMEOUT_MS
+                readTimeout = HTTP_TIMEOUT_MS
+                check(responseCode in HTTP_OK) { "emulator clear failed: $responseCode" }
                 disconnect()
             }
         }

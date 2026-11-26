@@ -46,7 +46,7 @@ class FakeNoteRepository(
         val id = newId()
         val now = clock()
         val labelIds = (resolveIds(text) + extraLabelIds).distinct()
-        noteState.update { it + Note(id, text, labelIds, false, now, now, null) }
+        noteState.update { listOf(Note(id, text, labelIds, false, now, now, null)) + it }
         return id
     }
 
