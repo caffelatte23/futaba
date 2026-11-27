@@ -6,8 +6,10 @@ import android.util.Log
 import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.DocumentSnapshot
+import com.google.firebase.firestore.FieldPath
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.FirebaseFirestoreException
 import com.google.firebase.firestore.MetadataChanges
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.Source
@@ -25,6 +27,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
@@ -147,10 +150,10 @@ private fun <T> Flow<T>.retrying(): Flow<T> =
  * changes (nothing of the previous account lingers) and retry with backoff after a listener error. They never gate
  * writes.
  *
- * Writes are queued and run one at a time on the application scope under the uid captured at call time (dropped and
- * logged if it changed or is null). Each job reads what it needs from Firestore's local cache (`Source.CACHE`),
- * computes, and calls `commit()` without awaiting the server, so the next job sees the result. Label ids from
- * callers are validated against that uid's labels; unknown ids are dropped.
+ * Local writes are queued and run one at a time on the application scope under the uid captured at call time.
+ * Jobs are dropped and logged if the uid is null or has changed. Each job reads what it needs from Firestore's
+ * local cache (`Source.CACHE`) and calls `commit()` without awaiting the server, so the next job sees the result.
+ * Label writes drop unknown ids. Trash purge runs separately with server transactions.
  *
  * Known limitation: on a brand-new device before the first sync the cache may lack the user's remote labels, so a
  * new `#tag` can duplicate an existing remote label. Per write at most [MAX_NEW_LABELS_PER_WRITE] labels are created.
@@ -194,8 +197,13 @@ class FirestoreNoteRepository
 
         override val notes: Flow<List<Note>> =
             perUser(emptyList()) { u ->
-                u.collection("notes").orderBy("createdAt", Query.Direction.DESCENDING).snapshots().map { s ->
-                    s.documents.map { it.toNote() }
+                val noteSnapshots = u.collection("notes").orderBy("createdAt", Query.Direction.DESCENDING).snapshots()
+                combine(noteSnapshots, u.collection("labels").snapshots()) { noteSnapshot, labelSnapshot ->
+                    val known = labelSnapshot.documents.map(DocumentSnapshot::getId).toSet()
+                    noteSnapshot.documents.map { doc ->
+                        val note = doc.toNote()
+                        note.copy(labelIds = note.labelIds.filter { it in known })
+                    }
                 }
             }
 
@@ -212,9 +220,8 @@ class FirestoreNoteRepository
             }
 
         init {
-            // Keep the local cache warm for write jobs even when no UI collects the lists.
+            // The combined listener keeps both collections warm even when the UI is closed.
             notes.launchIn(scope)
-            labels.launchIn(scope)
         }
 
         /**
@@ -225,10 +232,10 @@ class FirestoreNoteRepository
         @Suppress("TooGenericExceptionCaught")
         private fun <T> enqueue(
             op: String,
+            uid: String? = auth.uid.value,
             block: suspend (DocumentReference) -> T,
         ): CompletableDeferred<T?> {
             val result = CompletableDeferred<T?>()
-            val uid = auth.uid.value
             if (uid == null) {
                 Log.w(TAG, "$op dropped: not signed in")
                 result.complete(null)
@@ -253,32 +260,39 @@ class FirestoreNoteRepository
             return result
         }
 
-        /** Commits in batches of at most [BATCH_LIMIT], unawaited; false if [user] is no longer current. */
-        private fun commitOps(
+        private fun isCurrent(uid: String): Boolean {
+            val current = auth.uid.value == uid
+            if (!current) Log.w(TAG, "write dropped: uid changed while preparing it")
+            return current
+        }
+
+        /** Submits one unawaited batch; false if [user] is no longer current. */
+        private fun commitBatch(
             user: DocumentReference,
             ops: List<BatchOp>,
         ): Boolean {
-            if (auth.uid.value != user.id) {
-                Log.w(TAG, "write dropped: uid changed while preparing it")
-                return false
-            }
-            ops.chunked(BATCH_LIMIT).forEach { chunk ->
-                db
-                    .batch()
-                    .also { b -> chunk.forEach { it(b) } }
-                    .commit()
-                    .addOnFailureListener { Log.w(TAG, "batch commit failed", it) }
-            }
+            val batch = db.batch().also { b -> ops.forEach { it(b) } }
+            if (!isCurrent(user.id)) return false
+            batch.commit().addOnFailureListener { Log.w(TAG, "batch commit failed", it) }
             return true
+        }
+
+        private fun commitIndividually(
+            user: DocumentReference,
+            ops: List<BatchOp>,
+        ) {
+            for (op in ops) {
+                if (!commitBatch(user, listOf(op))) break
+            }
         }
 
         override fun add(
             text: String,
             extraLabelIds: List<String>,
         ): String {
-            val id =
-                auth.uid.value?.let { userDoc(it).collection("notes").document().id } ?: UUID.randomUUID().toString()
-            enqueue("add") { user ->
+            val uid = auth.uid.value
+            val id = uid?.let { userDoc(it).collection("notes").document().id } ?: UUID.randomUUID().toString()
+            enqueue("add", uid) { user ->
                 val plan = planLabels(user, user.cachedLabels(), text)
                 val labelIds = (plan.ids + extraLabelIds.filter { it in plan.known }).distinct()
                 val now = Instant.now().toTimestamp()
@@ -291,7 +305,7 @@ class FirestoreNoteRepository
                         "updatedAt" to now,
                         "deletedAt" to null,
                     )
-                commitOps(user, plan.ops + setOp(user.collection("notes").document(id), fields))
+                commitBatch(user, plan.ops + setOp(user.collection("notes").document(id), fields))
             }
             return id
         }
@@ -318,7 +332,7 @@ class FirestoreNoteRepository
                         "labelIds" to (plan.ids + manual).distinct(),
                         "updatedAt" to Instant.now().toTimestamp(),
                     )
-                commitOps(user, plan.ops + updateOp(user.collection("notes").document(id), fields))
+                commitIndividually(user, plan.ops + updateOp(user.collection("notes").document(id), fields))
             }
         }
 
@@ -329,13 +343,12 @@ class FirestoreNoteRepository
         ) {
             enqueue("setLabels") { user ->
                 val known = user.cachedLabels().map(Label::id).toSet()
-                val added = add.filter { it in known }
                 val removed = remove.toSet()
                 val now = Instant.now().toTimestamp()
-                commitOps(
+                commitIndividually(
                     user,
                     user.cachedNotes().filter { it.id in ids }.map { n ->
-                        val labelIds = (n.labelIds + added).filterNot { it in removed }.distinct()
+                        val labelIds = (n.labelIds + add).filter { it in known && it !in removed }.distinct()
                         updateOp(
                             user.collection("notes").document(n.id),
                             mapOf(
@@ -371,7 +384,7 @@ class FirestoreNoteRepository
             val values = fields()
             enqueue(op) { user ->
                 val present = user.cachedNotes().map(Note::id).toSet()
-                commitOps(
+                commitIndividually(
                     user,
                     ids.filter { it in present }.map { id ->
                         updateOp(user.collection("notes").document(id), values)
@@ -381,43 +394,68 @@ class FirestoreNoteRepository
         }
 
         override suspend fun purgeTrash(now: Instant) {
+            val uid = auth.uid.value ?: return
+            val notes = userDoc(uid).collection("notes")
             val limit = now.minus(TRASH_RETENTION).toTimestamp()
-            enqueue("purgeTrash") { user ->
-                val expired = user.collection("notes").whereLessThan("deletedAt", limit)
-                // The server decides (another device may have restored a note); the cache veto keeps a local restore
-                // that is not acked yet. Offline, the server read fails and the run is skipped until next start.
-                val onServer =
-                    expired
+            val candidates =
+                try {
+                    notes
+                        .whereLessThan("deletedAt", limit)
                         .get(Source.SERVER)
                         .await()
                         .documents
-                        .map { it.reference.id }
-                        .toSet()
-                val refs =
-                    expired
-                        .get(Source.CACHE)
-                        .await()
-                        .documents
-                        .filter { it.id in onServer }
-                        .map { it.reference }
-                commitOps(user, refs.map(::deleteOp))
-            }.await()
+                } catch (e: FirebaseFirestoreException) {
+                    Log.w(TAG, "purgeTrash skipped: server query failed", e)
+                    emptyList()
+                }
+            for (candidate in candidates) {
+                if (!isCurrent(uid)) break
+                try {
+                    val cached = notes.whereEqualTo(FieldPath.documentId(), candidate.id).get(Source.CACHE).await()
+                    // A local restore can still be waiting to reach the server.
+                    if (cached.documents.none { it.getTimestamp("deletedAt") == null }) {
+                        purgeCandidate(uid, candidate.reference, limit)
+                    }
+                } catch (e: FirebaseFirestoreException) {
+                    Log.w(TAG, "purgeTrash failed for ${candidate.id}", e)
+                }
+            }
         }
 
-        override suspend fun createLabel(name: String): String =
-            enqueue("createLabel") { user ->
-                val labels = user.cachedLabels()
-                val existing = labels.firstOrNull { it.name.equals(name, ignoreCase = true) }?.id
-                if (existing != null) check(auth.uid.value == user.id) { "uid changed" }
-                existing
-                    ?: user
-                        .collection("labels")
-                        .document()
-                        .also { ref ->
-                            val order = (labels.maxOfOrNull(Label::order) ?: -1) + 1
-                            check(commitOps(user, listOf(setOp(ref, labelFields(name, order))))) { "uid changed" }
-                        }.id
-            }.await() ?: error("createLabel failed: not signed in or write dropped")
+        @Suppress("RedundantSuspendModifier") // await() suspends until the transaction finishes
+        internal suspend fun purgeCandidate(
+            uid: String,
+            ref: DocumentReference,
+            limit: Timestamp,
+        ) {
+            if (!isCurrent(uid)) return
+            db
+                .runTransaction { transaction ->
+                    val deletedAt = transaction.get(ref).getTimestamp("deletedAt")
+                    if (deletedAt != null && deletedAt < limit && isCurrent(uid)) {
+                        transaction.delete(ref)
+                    }
+                }.await()
+        }
+
+        override suspend fun createLabel(name: String): String {
+            val uid = checkNotNull(auth.uid.value) { "createLabel failed: not signed in" }
+            val id =
+                enqueue("createLabel", uid) { user ->
+                    val labels = user.cachedLabels()
+                    val existing = labels.firstOrNull { it.name.equals(name, ignoreCase = true) }?.id
+                    existing
+                        ?: user
+                            .collection("labels")
+                            .document()
+                            .also { ref ->
+                                val order = (labels.maxOfOrNull(Label::order) ?: -1) + 1
+                                check(commitBatch(user, listOf(setOp(ref, labelFields(name, order))))) { "uid changed" }
+                            }.id
+                }.await()
+            check(auth.uid.value == uid) { "createLabel failed: uid changed" }
+            return checkNotNull(id) { "createLabel failed: write dropped" }
+        }
 
         override fun renameLabel(
             id: String,
@@ -438,7 +476,7 @@ class FirestoreNoteRepository
         ) {
             enqueue(op) { user ->
                 val present = user.cachedLabels().map(Label::id).toSet()
-                commitOps(
+                commitIndividually(
                     user,
                     fieldsById.filterKeys { it in present }.map { (id, fields) ->
                         updateOp(user.collection("labels").document(id), fields)
@@ -454,15 +492,16 @@ class FirestoreNoteRepository
                         .collection(
                             "notes",
                         ).whereArrayContains("labelIds", id)
-                        .get()
+                        .get(Source.CACHE)
                         .await()
                         .documents
                 // The label delete is the first op, so it shares the first batch with the first detachments.
-                commitOps(
-                    user,
+                val ops =
                     listOf(deleteOp(user.collection("labels").document(id))) +
-                        affected.map { n -> updateOp(n.reference, mapOf("labelIds" to FieldValue.arrayRemove(id))) },
-                )
+                        affected.map { n -> updateOp(n.reference, mapOf("labelIds" to FieldValue.arrayRemove(id))) }
+                for (chunk in ops.chunked(BATCH_LIMIT)) {
+                    if (!commitBatch(user, chunk)) break
+                }
             }
         }
     }

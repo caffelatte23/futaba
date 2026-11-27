@@ -11,13 +11,13 @@ const val DEFAULT_LABEL_COLOR = ""
 /**
  * Notes and labels of the signed-in user.
  *
- * Write functions are fire-and-forget (the local cache updates immediately, sync happens later) except
- * [purgeTrash]. When nobody is signed in, writes are logged and dropped (`add`/`createLabel` still return a
- * fresh id); callers must not offer writes without a uid (the UI disables send in that state).
+ * Local writes update the cache immediately and sync later. [createLabel] waits for its local result, and
+ * [purgeTrash] uses server transactions. When nobody is signed in, queued writes are logged and dropped
+ * (`add` still returns a fresh id). Callers must disable writing without a uid.
  */
 @Suppress("TooManyFunctions") // one cohesive repository contract; splitting would only scatter label semantics
 interface NoteRepository {
-    /** All notes including trashed ones (filter with `filterNotes`); empty without a uid. */
+    /** All notes including trash (filter with `filterNotes`), with label ids resolved against known labels. */
     val notes: Flow<List<Note>>
 
     /** Labels ordered by `order` ascending. */
@@ -59,7 +59,7 @@ interface NoteRepository {
     /**
      * Returns the id of the existing label with that name (case-insensitive) or of the one it just created.
      * Suspends only until the write is queued and resolved, not for the server. Throws [IllegalStateException]
-     * when nobody is signed in.
+     * when nobody is signed in or the captured uid has changed.
      */
     suspend fun createLabel(name: String): String
 
@@ -75,6 +75,6 @@ interface NoteRepository {
 
     fun reorderLabels(idsInOrder: List<String>)
 
-    /** Deletes the label and detaches it from every note; note text is untouched. */
+    /** Deletes the label and detaches it from cached notes while preserving their text. */
     fun deleteLabel(id: String)
 }

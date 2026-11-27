@@ -8,6 +8,7 @@ import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Source
+import com.google.firebase.firestore.snapshots
 import io.github.caffelatte23.futaba.core.domain.filterNotes
 import io.github.caffelatte23.futaba.core.model.NoteFilter
 import kotlinx.coroutines.CoroutineScope
@@ -192,10 +193,11 @@ class FirestoreNoteRepositoryTest {
         runBlocking {
             ref.update("deletedAt", now.minus(Duration.ofDays(31)).toTimestamp()).await()
             repo.restore(listOf(id))
+            withTimeout(TIMEOUT_MS) { repo.notes.first { it.size == 1 && it.single().deletedAt == null } }
             repo.purgeTrash(now)
         }
 
-        val snapshot = runBlocking { ref.get(Source.CACHE).await() }
+        val snapshot = runBlocking { ref.get(Source.SERVER).await() }
         assertThat(snapshot.exists()).isTrue()
         assertThat(snapshot.get("deletedAt")).isNull()
     }
@@ -211,6 +213,42 @@ class FirestoreNoteRepositoryTest {
 
         assertThat(repo.notes.await { n -> n.single().deletedAt == null }.map { it.id }).containsExactly(id)
     }
+
+    @Test
+    fun bulkRestoreWithDeletedIdStillRestoresOthers() =
+        runBlocking {
+            withTimeout(TIMEOUT_MS) {
+                val stale = repo.add("deleted elsewhere")
+                val keep = listOf(repo.add("first"), repo.add("second"))
+                val uid = auth.currentUser!!.uid
+                val notesRef = db.collection("users").document(uid).collection("notes")
+                repo.notes.first { it.size == 3 }
+                repo.delete(listOf(stale) + keep)
+                repo.notes.first { it.size == 3 && it.all { note -> note.deletedAt != null } }
+                db.waitForPendingWrites().await()
+
+                db.disableNetwork().await()
+                try {
+                    deleteNoteOnServer(uid, stale)
+                    assertThat(
+                        notesRef
+                            .document(stale)
+                            .get(Source.CACHE)
+                            .await()
+                            .exists(),
+                    ).isTrue()
+                    repo.restore(listOf(stale) + keep)
+                    repo.notes.first { it.size == 3 && it.all { note -> note.deletedAt == null } }
+                } finally {
+                    db.enableNetwork().await()
+                }
+
+                db.waitForPendingWrites().await()
+                val server = notesRef.get(Source.SERVER).await()
+                assertThat(server.documents.map { it.id }).containsExactlyElementsIn(keep)
+                assertThat(server.documents.filter { it.getTimestamp("deletedAt") != null }).isEmpty()
+            }
+        }
 
     @Test
     fun purgeSkipsNoteRestoredOnAnotherDevice() {
@@ -229,12 +267,46 @@ class FirestoreNoteRepositoryTest {
 
         runBlocking { repo.purgeTrash(now) }
 
-        assertThat(runBlocking { ref.get(Source.CACHE).await() }.exists()).isTrue()
+        val restored = runBlocking { ref.get(Source.SERVER).await() }
+        assertThat(restored.exists()).isTrue()
+        assertThat(restored.getTimestamp("deletedAt")).isNull()
     }
 
     @Test
+    fun purgeTransactionSkipsNoteRestoredConcurrently() =
+        runBlocking {
+            withTimeout(TIMEOUT_MS) {
+                val now = Instant.now()
+                val cutoff = now.minus(Duration.ofDays(30)).toTimestamp()
+                val id = repo.add("restored after candidate selection")
+                val uid = auth.currentUser!!.uid
+                val ref =
+                    db
+                        .collection("users")
+                        .document(uid)
+                        .collection("notes")
+                        .document(id)
+                repo.notes.first { it.size == 1 }
+                ref.update("deletedAt", now.minus(Duration.ofDays(31)).toTimestamp()).await()
+                val candidate =
+                    ref.parent
+                        .whereLessThan("deletedAt", cutoff)
+                        .get(Source.SERVER)
+                        .await()
+                        .single()
+                clearDeletedAtOnServer(uid, id)
+
+                repo.purgeCandidate(uid, candidate.reference, cutoff)
+
+                val restored = ref.get(Source.SERVER).await()
+                assertThat(restored.exists()).isTrue()
+                assertThat(restored.getTimestamp("deletedAt")).isNull()
+            }
+        }
+
+    @Test
     fun addDropsUnknownExtraLabelId() {
-        repo.add("x", listOf("bogus"))
+        val id = repo.add("x", listOf("bogus"))
 
         assertThat(
             repo.notes
@@ -242,6 +314,23 @@ class FirestoreNoteRepositoryTest {
                 .single()
                 .labelIds,
         ).isEmpty()
+
+        val ref =
+            db
+                .collection("users")
+                .document(auth.currentUser!!.uid)
+                .collection("notes")
+                .document(id)
+        runBlocking { ref.update(mapOf("text" to "synced", "labelIds" to listOf("dangling"))).await() }
+        assertThat(
+            repo.notes
+                .await { it.singleOrNull()?.text == "synced" }
+                .single()
+                .labelIds,
+        ).isEmpty()
+
+        repo.setLabels(listOf(id), add = listOf("bogus"), remove = emptyList())
+        ref.snapshots().await { it.get("labelIds") == emptyList<String>() }
     }
 
     @Test
@@ -267,7 +356,7 @@ class FirestoreNoteRepositoryTest {
 
     @Test
     fun deleteLabelDetachesFromNotes() {
-        repo.add("idea #foo")
+        val id = repo.add("idea #foo")
         val label = repo.labels.await { it.size == 1 }.single()
         repo.notes.await { it.size == 1 }
 
@@ -276,7 +365,53 @@ class FirestoreNoteRepositoryTest {
         val note = repo.notes.await { n -> n.single().labelIds.isEmpty() }.single()
         assertThat(note.text).isEqualTo("idea #foo")
         assertThat(repo.labels.await { it.isEmpty() }).isEmpty()
+        val ref =
+            db
+                .collection("users")
+                .document(auth.currentUser!!.uid)
+                .collection("notes")
+                .document(id)
+        val stored = runBlocking { ref.get(Source.CACHE).await() }
+        assertThat(stored.get("labelIds")).isEqualTo(emptyList<String>())
     }
+
+    @Test
+    fun deleteLabelOfflineDetachesCachedNotes() =
+        runBlocking {
+            withTimeout(TIMEOUT_MS) {
+                val ids = listOf(repo.add("first #foo"), repo.add("second #foo"))
+                val label = repo.labels.first { it.size == 1 }.single()
+                repo.notes.first { it.size == 2 && it.all { note -> label.id in note.labelIds } }
+                db.waitForPendingWrites().await()
+                val user = db.collection("users").document(auth.currentUser!!.uid)
+
+                db.disableNetwork().await()
+                try {
+                    repo.deleteLabel(label.id)
+
+                    repo.labels.first { it.isEmpty() }
+                    repo.notes.first { it.size == 2 && it.all { note -> note.labelIds.isEmpty() } }
+                    ids.forEach { id ->
+                        val note =
+                            user
+                                .collection("notes")
+                                .document(id)
+                                .get(Source.CACHE)
+                                .await()
+                        assertThat(note.get("labelIds")).isEqualTo(emptyList<String>())
+                    }
+                    assertThat(
+                        user
+                            .collection("labels")
+                            .get(Source.CACHE)
+                            .await()
+                            .isEmpty,
+                    ).isTrue()
+                } finally {
+                    db.enableNetwork().await()
+                }
+            }
+        }
 
     private fun Instant.toTimestamp() = Timestamp(epochSecond, nano)
 
@@ -321,6 +456,22 @@ class FirestoreNoteRepositoryTest {
                 setRequestProperty("Content-Type", "application/json")
                 outputStream.use { it.write("""{"fields":{"deletedAt":{"nullValue":null}}}""".toByteArray()) }
                 check(responseCode in HTTP_OK) { "emulator patch failed: $responseCode" }
+                disconnect()
+            }
+        }
+
+        private fun deleteNoteOnServer(
+            uid: String,
+            noteId: String,
+        ) {
+            val base = "http://$HOST:8080/v1/projects/$PROJECT/databases/(default)/documents"
+            val url = URL("$base/users/$uid/notes/$noteId")
+            (url.openConnection() as HttpURLConnection).run {
+                requestMethod = "DELETE"
+                connectTimeout = HTTP_TIMEOUT_MS
+                readTimeout = HTTP_TIMEOUT_MS
+                setRequestProperty("Authorization", "Bearer owner")
+                check(responseCode in HTTP_OK) { "emulator delete failed: $responseCode" }
                 disconnect()
             }
         }

@@ -58,7 +58,7 @@ class FakeNoteRepository(
     ) {
         noteState.value.firstOrNull { it.id == id }?.let { old ->
             val manual = old.labelIds - resolveLabels(parseHashtags(old.text), labelState.value).existingIds.toSet()
-            val labelIds = (resolveIds(text) + manual).distinct()
+            val labelIds = (resolveIds(text) + manual.filter(::isKnown)).distinct()
             mapNotes(listOf(id)) { it.copy(text = text, labelIds = labelIds, updatedAt = clock()) }
         }
     }
@@ -71,8 +71,8 @@ class FakeNoteRepository(
         n.copy(
             labelIds =
                 (n.labelIds + add)
-                    .filterNot {
-                        it in remove
+                    .filter {
+                        isKnown(it) && it !in remove
                     }.distinct(),
             updatedAt = clock(),
         )
