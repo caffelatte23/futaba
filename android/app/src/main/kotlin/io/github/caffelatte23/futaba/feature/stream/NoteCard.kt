@@ -12,6 +12,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.caffelatte23.futaba.core.designsystem.FutabaMono
@@ -28,6 +29,7 @@ fun NoteCard(
     labelNames: LabelNames,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    body: AnnotatedString = AnnotatedString(note.text),
 ) {
     Surface(
         onClick = onClick,
@@ -37,7 +39,7 @@ fun NoteCard(
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                note.text,
+                body,
                 style = MaterialTheme.typography.bodyLarge,
                 maxLines = BODY_MAX_LINES,
                 overflow = TextOverflow.Ellipsis,
