@@ -2,7 +2,6 @@ package io.github.caffelatte23.futaba.feature.stream
 
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.text.input.clearText
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -29,6 +28,7 @@ internal data class SelectionActions(
 internal fun SelectionBar(
     count: Int,
     allPinned: Boolean,
+    enabled: Boolean,
     actions: SelectionActions,
 ) {
     Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -36,8 +36,10 @@ internal fun SelectionBar(
             onClick = actions.onClose,
         ) { Icon(painterResource(R.drawable.ic_close), contentDescription = "選択を解除") }
         Text("${count}件を選択", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
-        IconButton(onClick = actions.onLabel) { Icon(painterResource(R.drawable.ic_label), contentDescription = "ラベル") }
-        IconButton(onClick = actions.onPin) {
+        IconButton(onClick = actions.onLabel, enabled = enabled) {
+            Icon(painterResource(R.drawable.ic_label), contentDescription = "ラベル")
+        }
+        IconButton(onClick = actions.onPin, enabled = enabled) {
             Icon(
                 painterResource(R.drawable.ic_push_pin),
                 contentDescription = if (allPinned) "ピン留めを外す" else "ピン留め",
@@ -45,6 +47,7 @@ internal fun SelectionBar(
         }
         IconButton(
             onClick = actions.onDelete,
+            enabled = enabled,
         ) { Icon(painterResource(R.drawable.ic_delete), contentDescription = "削除") }
     }
 }

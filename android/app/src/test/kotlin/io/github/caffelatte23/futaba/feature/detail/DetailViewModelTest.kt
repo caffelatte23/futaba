@@ -235,4 +235,21 @@ class DetailViewModelTest {
             runCurrent()
             assertThat(vm.state.value.sheet).isNull()
         }
+
+    @Test
+    fun detailSessionDiscardedOnStop() =
+        runTest {
+            val id = fake.add("a")
+            val l = fake.createLabel("l")
+            val vm = DetailViewModel(fake, bus, id)
+            backgroundScope.launch { vm.state.collect {} }
+            runCurrent()
+            vm.labelSheet.open()
+            vm.labelSheet.toggle(l, LabelCheck.All)
+            runCurrent()
+            assertThat(vm.state.value.sheet).isNotNull()
+            vm.onScreenStop(null)
+            runCurrent()
+            assertThat(vm.state.value.sheet).isNull()
+        }
 }

@@ -57,7 +57,7 @@ data class LabelSheetUi(
 /**
  * One label-sheet session, owned by a ViewModel so it survives recomposition and ends with the selection.
  * Untouched labels always reflect the targets' current membership; only explicit choices are staged.
- * [finish] waits for a running create so the new label is never left unattached.
+ * [finish] and [cancel] are refused while a create runs, so the new label is never left unattached.
  */
 @Stable
 class LabelSheetSession(
@@ -65,6 +65,8 @@ class LabelSheetSession(
     private val createLabel: suspend (String) -> String,
     private val baseline: () -> Map<String, LabelCheck>,
     private val commit: (add: List<String>, remove: List<String>) -> Unit,
+    /** False while the targets are not authoritative yet (placeholder data): finishing is refused. */
+    private val ready: () -> Boolean = { true },
 ) {
     private val ui = MutableStateFlow<LabelSheetUi?>(null)
     val state: StateFlow<LabelSheetUi?> = ui
@@ -81,7 +83,10 @@ class LabelSheetSession(
         ui.value = null
     }
 
-    fun cancel() = reset()
+    /** Ignored while a create runs, so its result (or error) is never lost. */
+    fun cancel() {
+        if (ui.value?.creating != true) reset()
+    }
 
     fun setQuery(query: String) = ui.update { it?.copy(query = query, createFailed = false) }
 
@@ -113,16 +118,12 @@ class LabelSheetSession(
             }
     }
 
-    /** Applies the staged choices as one [commit] (after a running create), then closes. */
+    /**
+     * Applies the staged choices as one [commit] and closes. Does nothing (the sheet stays) while a create
+     * is running or the targets are still loading, so dismiss gestures cannot drop edits or errors.
+     */
     fun finish() {
-        if (ui.value == null) return
-        scope.launch {
-            val create = pending?.takeIf { it.isActive }
-            create?.join()
-            // A create that failed while finishing keeps the sheet (error, query, staged edits) for retry.
-            if (create != null && ui.value?.createFailed == true) return@launch
-            applyStaged()
-        }
+        if (ui.value?.creating == false && ready()) applyStaged()
     }
 
     private fun applyStaged() {

@@ -125,6 +125,12 @@ class DetailViewModel
             write()
         }
 
+        /** Screen stopped: saves the editor and discards the label sheet so stale choices cannot outlive it. */
+        fun onScreenStop(fieldText: String?) {
+            flush(fieldText)
+            labelSheet.reset()
+        }
+
         /** Leaving the screen: saves [fieldText], or soft-deletes the note when it was cleared. True when deleted. */
         fun leave(fieldText: String?): Boolean {
             if (!ready.value || finished || fieldText == null) return false

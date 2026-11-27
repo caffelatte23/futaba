@@ -13,12 +13,15 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TriStateCheckbox
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.state.ToggleableState
@@ -36,9 +39,15 @@ fun LabelSheet(
     session: LabelSheetSession,
 ) {
     val base = remember(content) { labelChecks(content.targets, content.labels) }
+    // The sheet cannot be swiped or tapped away while a create runs (the session also ignores it).
+    val creating by rememberUpdatedState(ui.creating)
     ModalBottomSheet(
         onDismissRequest = session::finish,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        sheetState =
+            rememberModalBottomSheetState(
+                skipPartiallyExpanded = true,
+                confirmValueChange = { it != SheetValue.Hidden || !creating },
+            ),
     ) {
         Column(
             Modifier.navigationBarsPadding().padding(horizontal = 16.dp),

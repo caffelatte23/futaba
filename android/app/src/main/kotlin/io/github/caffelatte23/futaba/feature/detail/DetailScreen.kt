@@ -78,7 +78,7 @@ fun DetailScreen(
     }
 
     BackHandler(onBack = leave)
-    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.flush(editor.textIfSeeded()) }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.onScreenStop(editor.textIfSeeded()) }
     val currentOnBack by rememberUpdatedState(onBack)
     LaunchedEffect(viewModel) { viewModel.events.collect { currentOnBack() } }
     LaunchedEffect(field) {

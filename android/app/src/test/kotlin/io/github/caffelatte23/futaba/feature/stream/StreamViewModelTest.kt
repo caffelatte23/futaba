@@ -690,7 +690,7 @@ class StreamViewModelTest {
         }
 
     @Test
-    fun finishWaitsForPendingCreate() =
+    fun dismissBlockedWhileCreating() =
         runTest {
             val a = repo.add("a")
             val gate = CompletableDeferred<Unit>()
@@ -699,10 +699,14 @@ class StreamViewModelTest {
                 vm.toggleSelect(a)
                 vm.labelSheet.open()
                 vm.labelSheet.create("new")
-                vm.labelSheet.finish() // swipe-dismiss while the create is still suspended
-                expectMostRecentItem()
+                vm.labelSheet.finish() // scrim tap / 完了 / Back while the create is suspended
+                vm.labelSheet.cancel()
+                runCurrent()
+                assertThat(vm.labelSheet.state.value).isNotNull()
                 assertThat(repo.setLabelsCalls).isEmpty()
                 gate.complete(Unit)
+                runCurrent()
+                vm.labelSheet.finish() // create done: the new label is staged, finish attaches it
                 val id =
                     repo.labels
                         .first()
@@ -711,14 +715,49 @@ class StreamViewModelTest {
                 val call = repo.setLabelsCalls.single()
                 assertThat(call.ids).containsExactly(a)
                 assertThat(call.add).containsExactly(id)
-                assertThat(
-                    expectMostRecentItem()
-                        .sections
-                        .single()
-                        .notes
-                        .single()
-                        .labelIds,
-                ).containsExactly(id)
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun finishDisabledWhileNotesLoading() =
+        runTest {
+            val a = repo.add("a")
+            val l = repo.createLabel("l")
+            repo.setLabels(listOf(a), listOf(l), emptyList())
+            repo.setLabelsCalls.clear()
+            var hold: CompletableDeferred<Unit>? = null
+            val slow =
+                object : NoteRepository by repo {
+                    override val notes: Flow<List<Note>> =
+                        flow {
+                            hold?.await()
+                            emitAll(repo.notes)
+                        }
+                }
+            val vm = vm(repository = slow)
+            vm.state.test {
+                vm.toggleSelect(a)
+                vm.labelSheet.open()
+                vm.labelSheet.toggle(l, LabelCheck.All) // stage removal of l
+                expectMostRecentItem()
+                cancelAndIgnoreRemainingEvents()
+            }
+            hold = CompletableDeferred()
+            advanceTimeBy(6_000)
+            runCurrent()
+            vm.state.test {
+                runCurrent() // placeholder: targets are empty
+                vm.labelSheet.finish()
+                runCurrent()
+                assertThat(vm.labelSheet.state.value).isNotNull() // kept, nothing committed
+                assertThat(repo.setLabelsCalls).isEmpty()
+                hold.complete(Unit)
+                runCurrent()
+                vm.labelSheet.finish()
+                runCurrent()
+                assertThat(repo.setLabelsCalls.single().remove).containsExactly(l)
+                cancelAndIgnoreRemainingEvents()
             }
         }
 

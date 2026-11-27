@@ -130,7 +130,7 @@ fun StreamScreen(
                             viewModel::deleteSelected,
                         )
                     }
-                SelectionBar(state.selection.size, state.selectedNotes.all(Note::pinned), actions)
+                SelectionBar(state.selection.size, state.selectedNotes.all(Note::pinned), state.notesLoaded, actions)
             } else {
                 TopBar(
                     title = streamTitle(filter, state.labelNames),
