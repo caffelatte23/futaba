@@ -70,6 +70,22 @@ class StreamViewModelTest {
     ) = StreamViewModel(repo, prefs, drafts, uid, appScope, UndoBus(), filter)
 
     @Test
+    fun switchingFilterKeepsDraft() =
+        runTest {
+            val first = vm()
+            first.state.test {
+                first.onDraftChange("keep me")
+                advanceUntilIdle()
+                cancelAndIgnoreRemainingEvents()
+            }
+            val second = vm(NoteFilter.ByLabel("a"))
+            second.state.test {
+                advanceUntilIdle()
+                assertThat(expectMostRecentItem().draft).isEqualTo("keep me")
+            }
+        }
+
+    @Test
     fun sendIgnoresBlankText() =
         runTest {
             val vm = vm()

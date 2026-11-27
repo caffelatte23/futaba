@@ -33,7 +33,10 @@ fun FutabaNavDisplay(
                     StreamScreen(
                         filter = key.filter,
                         focusComposer = focusComposer,
-                        onNavigate = backStack::add,
+                        // A filter switch replaces the top Stream instead of stacking another one.
+                        onNavigate = { target ->
+                            if (target is Stream) backStack[backStack.lastIndex] = target else backStack.add(target)
+                        },
                     )
                 }
                 // Placeholders: Tasks 8-13 replace these with real screens.

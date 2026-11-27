@@ -61,6 +61,8 @@ data class StreamUiState(
     val labelNames: LabelNames = LabelNames(emptyMap()),
     /** Label id -> number of live notes, shown in suggestions. */
     val usage: Map<String, Int> = emptyMap(),
+    /** Drawer label list: in `order`, with counts. */
+    val drawerLabels: List<DrawerLabel> = emptyList(),
 )
 
 private const val DRAFT_SAVE_DELAY_MS = 300L
@@ -128,6 +130,7 @@ class StreamViewModel
                     draftLoaded = ready,
                     labelNames = LabelNames(labels.associate { it.id to it.name }),
                     usage = usage,
+                    drawerLabels = drawerLabels(labels, usage),
                 )
             }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), StreamUiState())
 
