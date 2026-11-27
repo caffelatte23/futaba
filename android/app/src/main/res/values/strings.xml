@@ -1,6 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Futaba</string>
+    <string name="widget_description">最近のアイデアを表示して、新しいアイデアを書く</string>
+    <string name="widget_new_idea">新しいアイデア</string>
+    <string name="widget_empty">アイデアはまだありません</string>
     <string name="settings_title">設定</string>
     <string name="settings_back">戻る</string>
     <string name="settings_sync">同期</string>

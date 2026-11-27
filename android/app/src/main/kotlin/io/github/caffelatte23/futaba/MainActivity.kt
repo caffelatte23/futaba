@@ -13,7 +13,11 @@ import dagger.hilt.android.AndroidEntryPoint
 import io.github.caffelatte23.futaba.core.data.ThemeMode
 import io.github.caffelatte23.futaba.core.data.UserPreferencesRepository
 import io.github.caffelatte23.futaba.core.designsystem.FutabaTheme
+import io.github.caffelatte23.futaba.di.ApplicationScope
+import io.github.caffelatte23.futaba.entry.widget.CaptureWidget
 import io.github.caffelatte23.futaba.navigation.FutabaNavDisplay
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 /** Set by launchers (Task 14) to focus the composer regardless of the setting. */
@@ -22,6 +26,9 @@ const val EXTRA_FOCUS_COMPOSER = "focus_composer"
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
     @Inject lateinit var preferences: UserPreferencesRepository
+
+    @Inject @ApplicationScope
+    lateinit var appScope: CoroutineScope
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -40,5 +47,10 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        appScope.launch { CaptureWidget().refreshAll(applicationContext) }
     }
 }
