@@ -31,7 +31,12 @@ fun FutabaNavDisplay(modifier: Modifier = Modifier) {
                         filter = key.filter,
                         // A filter switch replaces the top Stream instead of stacking another one.
                         onNavigate = { target ->
-                            if (target is Stream) backStack[backStack.lastIndex] = target else backStack.add(target)
+                            when {
+                                target !is Stream -> backStack.add(target)
+
+                                // Only the visible (top) Stream may replace itself; an outgoing one must not.
+                                backStack.lastOrNull() == key -> backStack[backStack.lastIndex] = target
+                            }
                         },
                     )
                 }

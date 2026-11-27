@@ -24,13 +24,18 @@ import io.github.caffelatte23.futaba.core.model.NoteFilter
 import io.github.caffelatte23.futaba.di.ApplicationScope
 import io.github.caffelatte23.futaba.di.CurrentUid
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
@@ -67,6 +72,8 @@ data class StreamUiState(
     val drawerLabels: List<DrawerLabel> = emptyList(),
     /** Labels loaded and the active label filter is gone (deleted): the screen falls back to All. */
     val filterMissing: Boolean = false,
+    /** Label view only: labels loaded (signed in) and the label exists, so notes may be sent here. */
+    val labelViewReady: Boolean = false,
 )
 
 private const val DRAFT_SAVE_DELAY_MS = 300L
@@ -115,12 +122,23 @@ class StreamViewModel
 
         // Start with empty lists so the composer never waits for Firestore's first emission.
         private val notesOrEmpty = repo.notes.onStart { emit(emptyList()) }
-        private val labelsOrEmpty = repo.labels.map { it to true }.onStart { emit(emptyList<Label>() to false) }
+
+        // Labels count as loaded only for a signed-in user, after an emission for that user.
+        @OptIn(ExperimentalCoroutinesApi::class)
+        private val labelsOrEmpty =
+            uid.flatMapLatest { id ->
+                if (id == null) {
+                    flowOf(emptyList<Label>() to false)
+                } else {
+                    repo.labels.map { it to true }.onStart { emit(emptyList<Label>() to false) }
+                }
+            }
 
         val state: StateFlow<StreamUiState> =
             combine(notesOrEmpty, labelsOrEmpty, draft, uid, loaded) { all, (labels, labelsLoaded), text, id, ready ->
                 val shown = filterNotes(all, filter)
                 val usage = labelUsage(all)
+                val labelViewReady = labelsLoaded && labels.any { (filter as? NoteFilter.ByLabel)?.labelId == it.id }
                 val prefix = trailingHashtag.find(text)?.groupValues?.get(1)
                 StreamUiState(
                     sections =
@@ -130,22 +148,19 @@ class StreamViewModel
                     count = shown.size,
                     draft = text,
                     suggestions = prefix?.let { suggestLabels(it, labels, usage) }.orEmpty(),
-                    canSend = text.isNotBlank() && id != null,
+                    canSend = text.isNotBlank() && id != null && (filter !is NoteFilter.ByLabel || labelViewReady),
                     draftLoaded = ready,
                     labelNames = LabelNames(labels.associate { it.id to it.name }),
                     usage = usage,
                     drawerLabels = drawerLabels(labels, usage),
-                    filterMissing =
-                        labelsLoaded && filter is NoteFilter.ByLabel && labels.none { it.id == filter.labelId },
+                    filterMissing = labelsLoaded && filter is NoteFilter.ByLabel && !labelViewReady,
+                    labelViewReady = labelViewReady,
                 )
             }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), StreamUiState())
 
-        /** Focus the composer now? Consumes the app-wide one-shot request (forced, or per the setting). */
-        @Suppress("RedundantSuspendModifier") // detekt false positive: Flow.first is a suspend call
-        suspend fun wantsStartupFocus(): Boolean {
-            val forced = focusRequests.take() ?: return false
-            return forced || prefs.openKeyboardOnLaunch.first()
-        }
+        /** Emits when a newer focus request arrives (and was not already served by another screen). */
+        val focusRequested: Flow<Unit> =
+            focusRequests.requests.filter(focusRequests::serve).map { }
 
         /** The pending 「元に戻す」 offer (from Detail or bulk delete); survives screen recreation. */
         val pendingUndo = undoBus.pending
@@ -193,8 +208,9 @@ class StreamViewModel
         /** Sends [text] (the field content); returns whether it was accepted. The draft is cleared only then. */
         fun send(text: String): Boolean {
             val body = text.trim()
-            // A deleted active label must never be attached.
-            val blocked = uid.value == null || !loaded.value || state.value.filterMissing
+            // A label view only sends once its label is known to exist (not deleted, not still loading).
+            val blocked =
+                uid.value == null || !loaded.value || (filter is NoteFilter.ByLabel && !state.value.labelViewReady)
             if (body.isEmpty() || blocked) return false
             repo.add(body, (filter as? NoteFilter.ByLabel)?.let { listOf(it.labelId) }.orEmpty())
             flushDraft("")

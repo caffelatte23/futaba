@@ -53,11 +53,13 @@ import io.github.caffelatte23.futaba.navigation.LabelEdit
 import io.github.caffelatte23.futaba.navigation.Search
 import io.github.caffelatte23.futaba.navigation.Settings
 import io.github.caffelatte23.futaba.navigation.Stream
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.time.LocalDate
 
+// Drawer selection flushes the (global) draft before this entry and its ViewModel are replaced.
 @Composable
 fun StreamScreen(
     filter: NoteFilter,
@@ -74,12 +76,11 @@ fun StreamScreen(
         viewModel::draftNow,
         viewModel::onDraftChange,
         viewModel::flushDraft,
-    ) { viewModel.wantsStartupFocus() }
-
+        viewModel.focusRequested,
+    )
     val snackbar = remember { SnackbarHostState() }
     val undo by viewModel.pendingUndo.collectAsStateWithLifecycle()
     UndoSnackbarEffect(undo, snackbar, viewModel::now, viewModel::restore, viewModel::clearUndo)
-
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     DrawerBackAndFallback(drawer, state.filterMissing, onFallback = { onNavigate(Stream(NoteFilter.All)) })
@@ -87,15 +88,11 @@ fun StreamScreen(
         drawerState = drawer,
         modifier = modifier,
         drawerContent = {
-            FutabaDrawer(
+            StreamDrawer(
                 content = remember(filter, state.drawerLabels) { DrawerContent(filter, state.drawerLabels) },
-                onSelect = { next ->
-                    // The draft is global: persist what is typed before this entry (and its ViewModel) is replaced.
-                    composer.textIfReady()?.let(viewModel::flushDraft)
-                    if (next == filter) scope.launch { drawer.close() } else onNavigate(Stream(next))
-                },
-                onManageLabels = { scope.launch { drawer.snapTo(DrawerValue.Closed) }.also { onNavigate(LabelEdit) } },
-                onSettings = { scope.launch { drawer.snapTo(DrawerValue.Closed) }.also { onNavigate(Settings) } },
+                drawer = drawer,
+                flushDraft = { composer.textIfReady()?.let(viewModel::flushDraft) },
+                onNavigate = onNavigate,
             )
         },
     ) {
@@ -139,6 +136,32 @@ private fun streamTitle(
     else -> "Futaba"
 }
 
+@Composable
+private fun StreamDrawer(
+    content: DrawerContent,
+    drawer: DrawerState,
+    flushDraft: () -> Unit,
+    onNavigate: (NavKey) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val close: () -> Unit = { scope.launch { drawer.snapTo(DrawerValue.Closed) } }
+    FutabaDrawer(
+        content = content,
+        onSelect = { next ->
+            flushDraft()
+            if (next == content.current) scope.launch { drawer.close() } else onNavigate(Stream(next))
+        },
+        onManageLabels = {
+            close()
+            onNavigate(LabelEdit)
+        },
+        onSettings = {
+            close()
+            onNavigate(Settings)
+        },
+    )
+}
+
 /** Back closes an open drawer first; a deleted active label falls back to the All view. */
 @Composable
 private fun DrawerBackAndFallback(
@@ -158,13 +181,12 @@ private fun ComposerEffects(
     draftNow: () -> String,
     onDraftChange: (String) -> Unit,
     flushDraft: (String) -> Unit,
-    wantsStartupFocus: suspend () -> Boolean,
+    focusRequested: Flow<Unit>,
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
     val windowInfo = LocalWindowInfo.current
     val currentDraft by rememberUpdatedState(draftNow)
     val changeDraft by rememberUpdatedState(onDraftChange)
-    val wantsFocus by rememberUpdatedState(wantsStartupFocus)
     val flush by rememberUpdatedState(flushDraft)
 
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { composer.textIfReady()?.let(flush) }
@@ -176,7 +198,8 @@ private fun ComposerEffects(
         }
     }
     LaunchedEffect(composer) {
-        if (composer.enabled && wantsFocus()) {
+        if (!composer.enabled) return@LaunchedEffect
+        focusRequested.collect {
             // The IME ignores show requests until the window has focus (cold start).
             snapshotFlow { windowInfo.isWindowFocused }.first { it }
             composer.focusRequester.requestFocus()

@@ -21,6 +21,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.emptyFlow
@@ -305,13 +306,68 @@ class StreamViewModelTest {
     @Test
     fun focusNotRepeatedAfterFilterSwitch() =
         runTest {
-            val first = vm()
-            val second = vm(NoteFilter.ByLabel("a"))
-            assertThat(first.wantsStartupFocus()).isTrue()
-            assertThat(second.wantsStartupFocus()).isFalse()
+            focus.request()
+            vm().focusRequested.test { awaitItem() }
+            vm(NoteFilter.ByLabel("a")).focusRequested.test { expectNoEvents() }
             focus.request() // e.g. a new intent re-tapping the tile
-            assertThat(second.wantsStartupFocus()).isTrue()
-            assertThat(vm().wantsStartupFocus()).isFalse()
+            vm(NoteFilter.ByLabel("a")).focusRequested.test { awaitItem() }
+        }
+
+    @Test
+    fun newRequestWhileMountedRefocuses() =
+        runTest {
+            vm().focusRequested.test {
+                focus.request()
+                awaitItem()
+                focus.request()
+                awaitItem()
+            }
+        }
+
+    @Test
+    fun byLabelSendDisabledUntilLabelsLoaded() =
+        runTest {
+            val late = MutableSharedFlow<List<Label>>()
+            val slow =
+                object : NoteRepository by repo {
+                    override val labels: Flow<List<Label>> = late
+                }
+            val vm =
+                StreamViewModel(
+                    slow,
+                    prefs,
+                    drafts,
+                    uid,
+                    CoroutineScope(main.dispatcher),
+                    UndoBus(),
+                    focus,
+                    NoteFilter.ByLabel("w"),
+                )
+            vm.state.test {
+                vm.onDraftChange("x")
+                advanceUntilIdle()
+                assertThat(expectMostRecentItem().canSend).isFalse()
+                assertThat(vm.send("x")).isFalse()
+                late.emit(listOf(Label("w", "work", "", 0)))
+                advanceUntilIdle()
+                assertThat(expectMostRecentItem().canSend).isTrue()
+                assertThat(vm.send("x")).isTrue()
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun emptyLabelsWhileSignedOutDoesNotFallBack() =
+        runTest {
+            uid.value = null
+            val vm = vm(NoteFilter.ByLabel("w"))
+            vm.state.test {
+                advanceUntilIdle()
+                assertThat(expectMostRecentItem().filterMissing).isFalse()
+                uid.value = "u1" // signed in: the (really empty) label list now counts
+                advanceUntilIdle()
+                assertThat(expectMostRecentItem().filterMissing).isTrue()
+            }
         }
 
     @Test

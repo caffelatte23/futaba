@@ -9,6 +9,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
 import io.github.caffelatte23.futaba.core.data.ComposerFocusRequests
 import io.github.caffelatte23.futaba.core.data.ThemeMode
@@ -18,6 +19,7 @@ import io.github.caffelatte23.futaba.di.ApplicationScope
 import io.github.caffelatte23.futaba.entry.widget.CaptureWidget
 import io.github.caffelatte23.futaba.navigation.FutabaNavDisplay
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -30,13 +32,17 @@ class MainActivity : ComponentActivity() {
 
     @Inject @ApplicationScope
     lateinit var appScope: CoroutineScope
+
     @Inject lateinit var focusRequests: ComposerFocusRequests
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        // Not on recreation (rotation): the request was already served.
-        if (savedInstanceState == null && intent.getBooleanExtra(EXTRA_FOCUS_COMPOSER, false)) focusRequests.request()
+        // One request per launch (not on rotation): forced by a launcher, else per the setting.
+        if (savedInstanceState == null) {
+            val forced = intent.getBooleanExtra(EXTRA_FOCUS_COMPOSER, false)
+            lifecycleScope.launch { if (forced || preferences.openKeyboardOnLaunch.first()) focusRequests.request() }
+        }
         setContent {
             val theme by preferences.theme.collectAsStateWithLifecycle(ThemeMode.System)
             val darkTheme =
