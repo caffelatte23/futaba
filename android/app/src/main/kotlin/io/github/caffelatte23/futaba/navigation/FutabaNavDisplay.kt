@@ -8,6 +8,7 @@ import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.runtime.rememberNavBackStack
 import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.ui.NavDisplay
+import io.github.caffelatte23.futaba.feature.detail.DetailScreen
 import io.github.caffelatte23.futaba.feature.stream.StreamScreen
 
 @Composable
@@ -35,7 +36,7 @@ fun FutabaNavDisplay(
                     )
                 }
                 // Placeholders: Tasks 8-13 replace these with real screens.
-                entry<Detail> { Placeholder("Detail ${it.noteId}") }
+                entry<Detail> { key -> DetailScreen(key.noteId, onBack = { backStack.removeLastOrNull() }) }
                 entry<Search> { Placeholder("Search") }
                 entry<Settings> { Placeholder("Settings") }
                 entry<LabelEdit> { Placeholder("LabelEdit") }

@@ -10,6 +10,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import io.github.caffelatte23.futaba.core.data.DraftIntent
 import io.github.caffelatte23.futaba.core.data.DraftStore
 import io.github.caffelatte23.futaba.core.data.NoteRepository
+import io.github.caffelatte23.futaba.core.data.UndoBus
 import io.github.caffelatte23.futaba.core.data.UserPreferencesRepository
 import io.github.caffelatte23.futaba.core.domain.filterNotes
 import io.github.caffelatte23.futaba.core.domain.groupByDay
@@ -67,6 +68,7 @@ private const val STOP_TIMEOUT_MS = 5_000L
 /** `#` followed by a (possibly empty) label prefix at the very end of the draft. */
 private val trailingHashtag = Regex("""(?<![\p{L}\p{N}/&])[#＃]([\p{L}\p{N}_-]*)$""")
 
+@Suppress("LongParameterList") // constructor injection of independent collaborators
 @HiltViewModel(assistedFactory = StreamViewModel.Factory::class)
 class StreamViewModel
     @AssistedInject
@@ -76,6 +78,7 @@ class StreamViewModel
         private val drafts: DraftStore,
         @CurrentUid private val uid: StateFlow<String?>,
         @ApplicationScope private val appScope: CoroutineScope,
+        private val undoBus: UndoBus,
         @Assisted private val filter: NoteFilter,
     ) : ViewModel() {
         @AssistedFactory
@@ -131,6 +134,11 @@ class StreamViewModel
         @Suppress("RedundantSuspendModifier") // detekt false positive: Flow.first is a suspend call
         suspend fun wantsStartupFocus(forced: Boolean): Boolean =
             takeStartupFocus() && (forced || prefs.openKeyboardOnLaunch.first())
+
+        /** Deleted note ids (from Detail or bulk delete) to offer 「元に戻す」 for. */
+        val deletions = undoBus.deletions
+
+        fun restore(ids: List<String>) = repo.restore(ids)
 
         /** Current draft, for a recreated text field to start from. */
         fun draftNow(): String = draft.value

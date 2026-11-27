@@ -15,6 +15,10 @@ import androidx.compose.foundation.text.input.clearText
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -39,7 +43,10 @@ import io.github.caffelatte23.futaba.core.model.NoteFilter
 import io.github.caffelatte23.futaba.navigation.Detail
 import io.github.caffelatte23.futaba.navigation.Search
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withTimeoutOrNull
 import java.time.LocalDate
+
+private const val UNDO_TIMEOUT_MS = 5_000L
 
 @Composable
 fun StreamScreen(
@@ -73,6 +80,18 @@ fun StreamScreen(
         }
     }
 
+    val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(viewModel) {
+        viewModel.deletions.collect { ids ->
+            // Shown one at a time; the timeout dismisses it after 5s (M3 durations are only 4s/10s).
+            val result =
+                withTimeoutOrNull(UNDO_TIMEOUT_MS) {
+                    snackbar.showSnackbar("削除しました", "元に戻す", duration = SnackbarDuration.Indefinite)
+                }
+            if (result == SnackbarResult.ActionPerformed) viewModel.restore(ids)
+        }
+    }
+
     Column(
         modifier
             .fillMaxSize()
@@ -82,6 +101,7 @@ fun StreamScreen(
     ) {
         TopBar(count = state.count, onSearch = { onNavigate(Search) })
         StreamList(state, { onNavigate(Detail(it)) }, Modifier.weight(1f))
+        SnackbarHost(snackbar)
         Composer(
             composer = composer,
             canSend = state.canSend,
