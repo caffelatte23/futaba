@@ -4,11 +4,8 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Placeholder sprout; the real icon is a later task. -->
+    <!-- Keep the sprout path in sync with extension/assets/futaba-icon.svg. -->
     <path
-        android:fillColor="#00000000"
-        android:strokeColor="#161616"
-        android:strokeWidth="4"
-        android:strokeLineCap="round"
-        android:pathData="M54,78 L54,52 M54,52 C54,40 44,34 32,36 C32,48 40,54 54,52 M54,52 C54,40 64,34 76,36 C76,48 68,54 54,52" />
+        android:fillColor="#161616"
+        android:pathData="M50,60 C36,60 28,50 28,37 C41,35 50,41 54,51 C58,41 67,35 80,37 C80,50 72,60 58,60 L58,70 C58,72 56,74 54,74 C52,74 50,72 50,70 Z" />
 </vector>

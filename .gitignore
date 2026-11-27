@@ -2,6 +2,7 @@ node_modules/
 .gradle/
 build/
 local.properties
+keystore.properties
 *.keystore
 *.jks
 google-services.json
