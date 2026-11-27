@@ -11,10 +11,14 @@ import io.github.caffelatte23.futaba.core.domain.suggestLabels
 import io.github.caffelatte23.futaba.core.model.NoteFilter
 import io.github.caffelatte23.futaba.testing.FakeNoteRepository
 import io.github.caffelatte23.futaba.testing.MainDispatcherRule
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import org.junit.Rule
@@ -28,18 +32,25 @@ class StreamViewModelTest {
     private val uid = MutableStateFlow<String?>("u1")
 
     // In-memory DataStore: the file-backed one races on Windows renames under test dispatchers.
-    private val prefs =
+    private fun prefsWith(gate: CompletableDeferred<Unit>) =
         UserPreferencesRepository(
             object : DataStore<Preferences> {
                 private val state = MutableStateFlow(emptyPreferences())
-                override val data: Flow<Preferences> = state
+                override val data: Flow<Preferences> =
+                    flow {
+                        gate.await()
+                        emitAll(state)
+                    }
 
                 override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences =
                     transform(state.value).also { state.value = it }
             },
         )
 
-    private fun vm(filter: NoteFilter = NoteFilter.All) = StreamViewModel(repo, prefs, uid, filter)
+    private val prefs = prefsWith(CompletableDeferred(Unit))
+
+    private fun vm(filter: NoteFilter = NoteFilter.All) =
+        StreamViewModel(repo, prefs, uid, CoroutineScope(main.dispatcher), filter)
 
     @Test
     fun sendIgnoresBlankText() =
@@ -48,7 +59,7 @@ class StreamViewModelTest {
             vm.state.test {
                 vm.onDraftChange("  \n ")
                 assertThat(expectMostRecentItem().canSend).isFalse()
-                vm.send()
+                assertThat(vm.send("  ")).isFalse()
                 assertThat(repo.notes.first()).isEmpty()
             }
         }
@@ -63,7 +74,7 @@ class StreamViewModelTest {
                 val state = expectMostRecentItem()
                 assertThat(state.canSend).isFalse()
                 assertThat(state.draft).isEqualTo("idea")
-                vm.send()
+                assertThat(vm.send("idea")).isFalse()
                 assertThat(repo.notes.first()).isEmpty()
                 assertThat(vm.state.value.draft).isEqualTo("idea")
             }
@@ -76,7 +87,7 @@ class StreamViewModelTest {
             vm.state.test {
                 vm.onDraftChange("idea")
                 advanceUntilIdle()
-                vm.send()
+                assertThat(vm.send("idea")).isTrue()
                 advanceUntilIdle()
                 val state = expectMostRecentItem()
                 assertThat(state.draft).isEmpty()
@@ -98,7 +109,7 @@ class StreamViewModelTest {
             val vm = vm(NoteFilter.ByLabel(id))
             vm.state.test {
                 vm.onDraftChange("idea")
-                vm.send()
+                vm.send("idea")
                 assertThat(
                     repo.notes
                         .first()
@@ -124,9 +135,53 @@ class StreamViewModelTest {
         }
 
     @Test
-    fun restoredDraftReturnsSavedDraft() =
+    fun restoredDraftIsHydrated() =
         runTest {
             prefs.setDraft("saved")
-            assertThat(vm().restoredDraft()).isEqualTo("saved")
+            assertThat(vm().draftNow()).isEqualTo("saved")
+        }
+
+    @Test
+    fun typingBeforeHydrationIsNotOverwritten() =
+        runTest {
+            val slow = CompletableDeferred<Unit>()
+            val vm = StreamViewModel(repo, prefsWith(slow), uid, CoroutineScope(main.dispatcher), NoteFilter.All)
+            vm.onDraftChange("early")
+            vm.state.test {
+                assertThat(expectMostRecentItem().draftLoaded).isFalse()
+                slow.complete(Unit)
+                val loaded = expectMostRecentItem()
+                assertThat(loaded.draftLoaded).isTrue()
+                assertThat(loaded.draft).isEmpty()
+            }
+        }
+
+    @Test
+    fun sendRejectedKeepsDraft() =
+        runTest {
+            val vm = vm()
+            vm.state.test {
+                vm.onDraftChange("idea")
+                uid.value = null
+                assertThat(vm.send("idea")).isFalse()
+                assertThat(expectMostRecentItem().draft).isEqualTo("idea")
+            }
+        }
+
+    @Test
+    fun pendingDraftFlushedOnDemand() =
+        runTest {
+            val vm = vm()
+            vm.onDraftChange("abc")
+            vm.flushDraft() // no virtual time advanced: the debounce has not fired
+            assertThat(prefs.draft.first()).isEqualTo("abc")
+        }
+
+    @Test
+    fun startupFocusIsTakenOnce() =
+        runTest {
+            val vm = vm()
+            assertThat(vm.takeStartupFocus()).isTrue()
+            assertThat(vm.takeStartupFocus()).isFalse()
         }
 }

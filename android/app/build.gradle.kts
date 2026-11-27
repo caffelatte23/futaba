@@ -127,7 +127,6 @@ dependencies {
     implementation(libs.compose.ui.google.fonts)
     implementation(libs.compose.ui.tooling.preview)
     implementation(libs.material3)
-    implementation(libs.material.icons.core)
     implementation(libs.activity.compose)
     implementation(libs.lifecycle.runtime.compose)
     implementation(libs.lifecycle.viewmodel.compose)

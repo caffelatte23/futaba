@@ -12,10 +12,6 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.input.clearText
-import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -29,10 +25,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalWindowInfo
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.NavKey
+import io.github.caffelatte23.futaba.R
 import io.github.caffelatte23.futaba.core.designsystem.FutabaMono
 import io.github.caffelatte23.futaba.core.domain.dayHeader
 import io.github.caffelatte23.futaba.core.model.NoteFilter
@@ -51,22 +51,23 @@ fun StreamScreen(
         hiltViewModel<StreamViewModel, StreamViewModel.Factory>(creationCallback = { it.create(filter) }),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    val composer = remember { ComposerState() }
+    // The field is (re)created only after the draft is hydrated, starting from the current draft.
+    val composer = remember(state.draftLoaded) { ComposerState(viewModel.draftNow(), state.draftLoaded) }
     val keyboard = LocalSoftwareKeyboardController.current
     val windowInfo = LocalWindowInfo.current
 
-    LaunchedEffect(viewModel) {
-        val saved = viewModel.restoredDraft()
-        if (composer.text.text.isEmpty()) composer.text.setTextAndPlaceCursorAtEnd(saved)
-        if (focusComposer || viewModel.openKeyboardOnLaunch()) {
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.flushDraft() }
+    LaunchedEffect(composer) {
+        if (!composer.enabled) return@LaunchedEffect
+        snapshotFlow { composer.text.text.toString() }.collect(viewModel::onDraftChange)
+    }
+    LaunchedEffect(composer) {
+        if (composer.enabled && viewModel.wantsStartupFocus(focusComposer)) {
             // The IME ignores show requests until the window has focus (cold start).
             snapshotFlow { windowInfo.isWindowFocused }.first { it }
             composer.focusRequester.requestFocus()
             keyboard?.show()
         }
-    }
-    LaunchedEffect(viewModel, composer) {
-        snapshotFlow { composer.text.text.toString() }.collect(viewModel::onDraftChange)
     }
 
     Column(
@@ -83,9 +84,10 @@ fun StreamScreen(
             canSend = state.canSend,
             suggestions = remember(state.suggestions, state.usage) { Suggestions(state.suggestions, state.usage) },
             onSend = {
-                viewModel.send()
-                composer.text.clearText()
-                composer.focusRequester.requestFocus()
+                if (viewModel.send(composer.text.text.toString())) {
+                    composer.text.clearText()
+                    composer.focusRequester.requestFocus()
+                }
             },
         )
     }
@@ -98,7 +100,7 @@ private fun TopBar(
 ) {
     Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
         // Menu opens the drawer in Task 10.
-        IconButton(onClick = {}) { Icon(Icons.Default.Menu, contentDescription = "メニュー") }
+        IconButton(onClick = {}) { Icon(painterResource(R.drawable.ic_menu), contentDescription = "メニュー") }
         Text("Futaba", style = MaterialTheme.typography.titleLarge)
         Text(
             "$count",
@@ -106,7 +108,7 @@ private fun TopBar(
             style = MaterialTheme.typography.labelMedium.copy(fontFamily = FutabaMono),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        IconButton(onClick = onSearch) { Icon(Icons.Default.Search, contentDescription = "検索") }
+        IconButton(onClick = onSearch) { Icon(painterResource(R.drawable.ic_search), contentDescription = "検索") }
     }
 }
 

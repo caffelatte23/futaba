@@ -13,8 +13,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.TextFieldState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -28,7 +26,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.unit.dp
+import io.github.caffelatte23.futaba.R
 import io.github.caffelatte23.futaba.core.designsystem.FutabaMono
 import io.github.caffelatte23.futaba.core.model.Label
 
@@ -40,8 +41,11 @@ data class Suggestions(
 )
 
 /** The text field state plus the focus handle the screen needs to drive it. */
-class ComposerState {
-    val text = TextFieldState()
+class ComposerState(
+    initial: String,
+    val enabled: Boolean,
+) {
+    val text = TextFieldState(initial, TextRange(initial.length))
     val focusRequester = FocusRequester()
 }
 
@@ -65,6 +69,7 @@ fun Composer(
             Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 BasicTextField(
                     state = composer.text,
+                    enabled = composer.enabled,
                     modifier = Modifier.weight(1f).focusRequester(composer.focusRequester),
                     textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.onSurface),
@@ -98,7 +103,7 @@ fun Composer(
                             disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
                         ),
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "送信")
+                    Icon(painterResource(R.drawable.ic_send), contentDescription = "送信")
                 }
             }
             Text(
