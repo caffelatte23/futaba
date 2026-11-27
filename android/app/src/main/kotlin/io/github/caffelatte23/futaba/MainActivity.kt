@@ -10,6 +10,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dagger.hilt.android.AndroidEntryPoint
+import io.github.caffelatte23.futaba.core.data.ComposerFocusRequests
 import io.github.caffelatte23.futaba.core.data.ThemeMode
 import io.github.caffelatte23.futaba.core.data.UserPreferencesRepository
 import io.github.caffelatte23.futaba.core.designsystem.FutabaTheme
@@ -29,10 +30,13 @@ class MainActivity : ComponentActivity() {
 
     @Inject @ApplicationScope
     lateinit var appScope: CoroutineScope
+    @Inject lateinit var focusRequests: ComposerFocusRequests
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Not on recreation (rotation): the request was already served.
+        if (savedInstanceState == null && intent.getBooleanExtra(EXTRA_FOCUS_COMPOSER, false)) focusRequests.request()
         setContent {
             val theme by preferences.theme.collectAsStateWithLifecycle(ThemeMode.System)
             val darkTheme =
@@ -43,7 +47,7 @@ class MainActivity : ComponentActivity() {
                 }
             FutabaTheme(darkTheme = darkTheme) {
                 Surface(color = MaterialTheme.colorScheme.background) {
-                    FutabaNavDisplay(focusComposer = intent.getBooleanExtra(EXTRA_FOCUS_COMPOSER, false))
+                    FutabaNavDisplay()
                 }
             }
         }

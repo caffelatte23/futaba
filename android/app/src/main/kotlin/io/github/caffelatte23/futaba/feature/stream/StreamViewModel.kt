@@ -7,6 +7,7 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
+import io.github.caffelatte23.futaba.core.data.ComposerFocusRequests
 import io.github.caffelatte23.futaba.core.data.DraftIntent
 import io.github.caffelatte23.futaba.core.data.DraftStore
 import io.github.caffelatte23.futaba.core.data.NoteRepository
@@ -30,6 +31,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -63,6 +65,8 @@ data class StreamUiState(
     val usage: Map<String, Int> = emptyMap(),
     /** Drawer label list: in `order`, with counts. */
     val drawerLabels: List<DrawerLabel> = emptyList(),
+    /** Labels loaded and the active label filter is gone (deleted): the screen falls back to All. */
+    val filterMissing: Boolean = false,
 )
 
 private const val DRAFT_SAVE_DELAY_MS = 300L
@@ -82,6 +86,7 @@ class StreamViewModel
         @CurrentUid private val uid: StateFlow<String?>,
         @ApplicationScope private val appScope: CoroutineScope,
         private val undoBus: UndoBus,
+        private val focusRequests: ComposerFocusRequests,
         @Assisted private val filter: NoteFilter,
     ) : ViewModel() {
         @AssistedFactory
@@ -92,7 +97,6 @@ class StreamViewModel
         private val draft = MutableStateFlow("")
         private val pendingDraft = MutableStateFlow<DraftIntent?>(null)
         private val loaded = MutableStateFlow(false)
-        private var startupFocusTaken = false
 
         init {
             viewModelScope.launch {
@@ -111,10 +115,10 @@ class StreamViewModel
 
         // Start with empty lists so the composer never waits for Firestore's first emission.
         private val notesOrEmpty = repo.notes.onStart { emit(emptyList()) }
-        private val labelsOrEmpty = repo.labels.onStart { emit(emptyList()) }
+        private val labelsOrEmpty = repo.labels.map { it to true }.onStart { emit(emptyList<Label>() to false) }
 
         val state: StateFlow<StreamUiState> =
-            combine(notesOrEmpty, labelsOrEmpty, draft, uid, loaded) { all, labels, text, id, ready ->
+            combine(notesOrEmpty, labelsOrEmpty, draft, uid, loaded) { all, (labels, labelsLoaded), text, id, ready ->
                 val shown = filterNotes(all, filter)
                 val usage = labelUsage(all)
                 val prefix = trailingHashtag.find(text)?.groupValues?.get(1)
@@ -131,13 +135,17 @@ class StreamViewModel
                     labelNames = LabelNames(labels.associate { it.id to it.name }),
                     usage = usage,
                     drawerLabels = drawerLabels(labels, usage),
+                    filterMissing =
+                        labelsLoaded && filter is NoteFilter.ByLabel && labels.none { it.id == filter.labelId },
                 )
             }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), StreamUiState())
 
-        /** Focus the composer and show the keyboard now? Once per launch, if forced or enabled in settings. */
+        /** Focus the composer now? Consumes the app-wide one-shot request (forced, or per the setting). */
         @Suppress("RedundantSuspendModifier") // detekt false positive: Flow.first is a suspend call
-        suspend fun wantsStartupFocus(forced: Boolean): Boolean =
-            takeStartupFocus() && (forced || prefs.openKeyboardOnLaunch.first())
+        suspend fun wantsStartupFocus(): Boolean {
+            val forced = focusRequests.take() ?: return false
+            return forced || prefs.openKeyboardOnLaunch.first()
+        }
 
         /** The pending 「元に戻す」 offer (from Detail or bulk delete); survives screen recreation. */
         val pendingUndo = undoBus.pending
@@ -153,9 +161,6 @@ class StreamViewModel
 
         /** Current draft, for a recreated text field to start from. */
         fun draftNow(): String = draft.value
-
-        /** True only the first time: the startup keyboard request must not repeat when returning to the screen. */
-        fun takeStartupFocus(): Boolean = !startupFocusTaken.also { startupFocusTaken = true }
 
         fun onDraftChange(text: String) {
             if (loaded.value) recordDraft(text)
@@ -188,7 +193,9 @@ class StreamViewModel
         /** Sends [text] (the field content); returns whether it was accepted. The draft is cleared only then. */
         fun send(text: String): Boolean {
             val body = text.trim()
-            if (body.isEmpty() || uid.value == null || !loaded.value) return false
+            // A deleted active label must never be attached.
+            val blocked = uid.value == null || !loaded.value || state.value.filterMissing
+            if (body.isEmpty() || blocked) return false
             repo.add(body, (filter as? NoteFilter.ByLabel)?.let { listOf(it.labelId) }.orEmpty())
             flushDraft("")
             return true

@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
 import app.cash.turbine.test
 import com.google.common.truth.Truth.assertThat
+import io.github.caffelatte23.futaba.core.data.ComposerFocusRequests
 import io.github.caffelatte23.futaba.core.data.DraftStore
 import io.github.caffelatte23.futaba.core.data.NoteRepository
 import io.github.caffelatte23.futaba.core.data.UndoBus
@@ -63,11 +64,12 @@ class StreamViewModelTest {
 
     private val prefs = prefsWith(CompletableDeferred(Unit))
     private val drafts = DraftStore(prefs)
+    private val focus = ComposerFocusRequests()
 
     private fun vm(
         filter: NoteFilter = NoteFilter.All,
         appScope: CoroutineScope = CoroutineScope(main.dispatcher),
-    ) = StreamViewModel(repo, prefs, drafts, uid, appScope, UndoBus(), filter)
+    ) = StreamViewModel(repo, prefs, drafts, uid, appScope, UndoBus(), focus, filter)
 
     @Test
     fun switchingFilterKeepsDraft() =
@@ -202,7 +204,16 @@ class StreamViewModelTest {
             prefs.setDraft("saved")
             val drafts = DraftStore(prefs)
             val vm =
-                StreamViewModel(repo, prefs, drafts, uid, CoroutineScope(main.dispatcher), UndoBus(), NoteFilter.All)
+                StreamViewModel(
+                    repo,
+                    prefs,
+                    drafts,
+                    uid,
+                    CoroutineScope(main.dispatcher),
+                    UndoBus(),
+                    focus,
+                    NoteFilter.All,
+                )
             assertThat(vm.draftNow()).isEqualTo("saved")
             advanceTimeBy(301)
 
@@ -222,6 +233,7 @@ class StreamViewModelTest {
                     uid,
                     CoroutineScope(main.dispatcher),
                     UndoBus(),
+                    focus,
                     NoteFilter.All,
                 )
             vm.onDraftChange("early")
@@ -277,16 +289,58 @@ class StreamViewModelTest {
                     override val labels: Flow<List<Label>> = emptyFlow()
                 }
             val vm =
-                StreamViewModel(silent, prefs, drafts, uid, CoroutineScope(main.dispatcher), UndoBus(), NoteFilter.All)
+                StreamViewModel(
+                    silent,
+                    prefs,
+                    drafts,
+                    uid,
+                    CoroutineScope(main.dispatcher),
+                    UndoBus(),
+                    focus,
+                    NoteFilter.All,
+                )
             vm.state.test { assertThat(expectMostRecentItem().draftLoaded).isTrue() }
         }
 
     @Test
-    fun startupFocusIsTakenOnce() =
+    fun focusNotRepeatedAfterFilterSwitch() =
         runTest {
-            val vm = vm()
-            assertThat(vm.takeStartupFocus()).isTrue()
-            assertThat(vm.takeStartupFocus()).isFalse()
+            val first = vm()
+            val second = vm(NoteFilter.ByLabel("a"))
+            assertThat(first.wantsStartupFocus()).isTrue()
+            assertThat(second.wantsStartupFocus()).isFalse()
+            focus.request() // e.g. a new intent re-tapping the tile
+            assertThat(second.wantsStartupFocus()).isTrue()
+            assertThat(vm().wantsStartupFocus()).isFalse()
+        }
+
+    @Test
+    fun deletedActiveLabelFallsBackToAll() =
+        runTest {
+            val id = repo.createLabel("idea")
+            val vm = vm(NoteFilter.ByLabel(id))
+            vm.state.test {
+                vm.onDraftChange("x")
+                advanceUntilIdle()
+                assertThat(expectMostRecentItem().filterMissing).isFalse()
+                repo.deleteLabel(id)
+                advanceUntilIdle()
+                assertThat(expectMostRecentItem().filterMissing).isTrue()
+                assertThat(vm.send("x")).isFalse()
+            }
+            assertThat(repo.notes.first()).isEmpty()
+        }
+
+    @Test
+    fun switchRightAfterEditKeepsLatestText() =
+        runTest {
+            val first = vm()
+            runCurrent() // hydrate only; the edit below is not debounced or observed yet
+            first.onDraftChange("fresh")
+            first.flushDraft("fresher") // the field is ahead of the ViewModel at switch time
+            val second = vm(NoteFilter.ByLabel("a"))
+            runCurrent()
+            assertThat(second.draftNow()).isEqualTo("fresher")
         }
 
     @Test

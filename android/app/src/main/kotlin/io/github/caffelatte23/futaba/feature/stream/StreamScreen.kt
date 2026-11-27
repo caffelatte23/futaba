@@ -1,5 +1,6 @@
 package io.github.caffelatte23.futaba.feature.stream
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -12,6 +13,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.input.clearText
+import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -59,7 +61,6 @@ import java.time.LocalDate
 @Composable
 fun StreamScreen(
     filter: NoteFilter,
-    focusComposer: Boolean,
     onNavigate: (NavKey) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: StreamViewModel =
@@ -73,7 +74,7 @@ fun StreamScreen(
         viewModel::draftNow,
         viewModel::onDraftChange,
         viewModel::flushDraft,
-    ) { viewModel.wantsStartupFocus(focusComposer) }
+    ) { viewModel.wantsStartupFocus() }
 
     val snackbar = remember { SnackbarHostState() }
     val undo by viewModel.pendingUndo.collectAsStateWithLifecycle()
@@ -81,7 +82,7 @@ fun StreamScreen(
 
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
-    val title = streamTitle(filter, state.labelNames)
+    DrawerBackAndFallback(drawer, state.filterMissing, onFallback = { onNavigate(Stream(NoteFilter.All)) })
     ModalNavigationDrawer(
         drawerState = drawer,
         modifier = modifier,
@@ -106,7 +107,7 @@ fun StreamScreen(
                 .imePadding(),
         ) {
             TopBar(
-                title = title,
+                title = streamTitle(filter, state.labelNames),
                 count = state.count,
                 onMenu = { scope.launch { drawer.open() } },
                 onSearch = { onNavigate(Search) },
@@ -136,6 +137,19 @@ private fun streamTitle(
     NoteFilter.Unlabeled -> "ラベルなし"
     is NoteFilter.ByLabel -> names.byId[filter.labelId].orEmpty()
     else -> "Futaba"
+}
+
+/** Back closes an open drawer first; a deleted active label falls back to the All view. */
+@Composable
+private fun DrawerBackAndFallback(
+    drawer: DrawerState,
+    filterMissing: Boolean,
+    onFallback: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val fallback by rememberUpdatedState(onFallback)
+    BackHandler(enabled = drawer.isOpen) { scope.launch { drawer.close() } }
+    LaunchedEffect(filterMissing) { if (filterMissing) fallback() }
 }
 
 @Composable
