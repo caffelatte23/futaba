@@ -1,6 +1,8 @@
 package io.github.caffelatte23.futaba.testing
 
 import io.github.caffelatte23.futaba.core.data.DEFAULT_LABEL_COLOR
+import io.github.caffelatte23.futaba.core.data.DeletedLabel
+import io.github.caffelatte23.futaba.core.data.DuplicateLabelNameException
 import io.github.caffelatte23.futaba.core.data.NoteRepository
 import io.github.caffelatte23.futaba.core.domain.parseHashtags
 import io.github.caffelatte23.futaba.core.domain.resolveLabels
@@ -92,7 +94,15 @@ class FakeNoteRepository(
         noteState.update { list -> list.filterNot { n -> n.deletedAt?.isBefore(limit) == true } }
     }
 
-    override suspend fun createLabel(name: String): String = createLabelNow(name)
+    override suspend fun createLabel(
+        name: String,
+        reuseExisting: Boolean,
+    ): String {
+        if (!reuseExisting && labelState.value.any { it.name.equals(name, ignoreCase = true) }) {
+            throw DuplicateLabelNameException()
+        }
+        return createLabelNow(name)
+    }
 
     private fun createLabelNow(name: String): String {
         labelState.value.firstOrNull { it.name.equals(name, ignoreCase = true) }?.let { return it.id }
@@ -107,10 +117,15 @@ class FakeNoteRepository(
         transform: (Label) -> Label,
     ) = labelState.update { list -> list.map { if (it.id == id) transform(it) else it } }
 
-    override fun renameLabel(
+    override suspend fun renameLabel(
         id: String,
         name: String,
-    ) = mapLabel(id) { it.copy(name = name) }
+    ) {
+        if (labelState.value.any { it.id != id && it.name.equals(name, ignoreCase = true) }) {
+            throw DuplicateLabelNameException()
+        }
+        mapLabel(id) { it.copy(name = name) }
+    }
 
     override fun setLabelColor(
         id: String,
@@ -130,6 +145,19 @@ class FakeNoteRepository(
     override fun deleteLabel(id: String) {
         labelState.update { list -> list.filterNot { it.id == id } }
         noteState.update { list -> list.map { it.copy(labelIds = it.labelIds - id) } }
+    }
+
+    override suspend fun deleteLabelForUndo(id: String): DeletedLabel {
+        val label = labelState.value.first { it.id == id }
+        val noteIds = noteState.value.filter { id in it.labelIds }.map(Note::id)
+        deleteLabel(id)
+        return DeletedLabel(label, noteIds)
+    }
+
+    override suspend fun restoreLabel(deleted: DeletedLabel) {
+        val label = deleted.label
+        labelState.update { labels -> labels.filterNot { it.id == label.id } + label }
+        mapNotes(deleted.noteIds) { it.copy(labelIds = (it.labelIds + label.id).distinct()) }
     }
 
     private companion object {

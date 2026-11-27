@@ -5,8 +5,17 @@ import io.github.caffelatte23.futaba.core.model.Note
 import kotlinx.coroutines.flow.Flow
 import java.time.Instant
 
-/** Color of new labels: empty string, shared with the Chrome extension; Task 12 assigns real colors. */
+/** Unset label color, shared with the Chrome extension. */
 const val DEFAULT_LABEL_COLOR = ""
+
+class DuplicateLabelNameException : IllegalArgumentException()
+
+/** A locally deleted label and the cached notes it was attached to, including notes in trash. */
+class DeletedLabel(
+    val label: Label,
+    val noteIds: List<String>,
+    internal val uid: String? = null,
+)
 
 /**
  * Notes and labels of the signed-in user.
@@ -57,13 +66,18 @@ interface NoteRepository {
     suspend fun purgeTrash(now: Instant)
 
     /**
-     * Returns the id of the existing label with that name (case-insensitive) or of the one it just created.
+     * Returns the id of the new label. A case-insensitive match returns the existing id when
+     * [reuseExisting] is true and throws [DuplicateLabelNameException] otherwise.
      * Suspends only until the write is queued and resolved, not for the server. Throws [IllegalStateException]
      * when nobody is signed in or the captured uid has changed.
      */
-    suspend fun createLabel(name: String): String
+    suspend fun createLabel(
+        name: String,
+        reuseExisting: Boolean = true,
+    ): String
 
-    fun renameLabel(
+    /** Saves a name locally, rejecting case-insensitive matches with another label. */
+    suspend fun renameLabel(
         id: String,
         name: String,
     )
@@ -77,4 +91,10 @@ interface NoteRepository {
 
     /** Deletes the label and detaches it from cached notes while preserving their text. */
     fun deleteLabel(id: String)
+
+    /** Snapshots and deletes locally in the same queued operation. */
+    suspend fun deleteLabelForUndo(id: String): DeletedLabel
+
+    /** Recreates the label at its original id and reattaches it to surviving notes. */
+    suspend fun restoreLabel(deleted: DeletedLabel)
 }
