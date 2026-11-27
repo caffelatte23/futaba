@@ -5,6 +5,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.glance.material3.ColorProviders
 
 private val LightScheme =
     lightColorScheme(
@@ -27,6 +28,8 @@ private val DarkScheme =
         onSurface = FutabaColors.DarkText,
         onSurfaceVariant = FutabaColors.DarkSecondaryText,
     )
+
+internal val FutabaWidgetColors = ColorProviders(light = LightScheme, dark = DarkScheme)
 
 @Composable
 fun FutabaTheme(
