@@ -201,6 +201,38 @@ class FirestoreNoteRepositoryTest {
     }
 
     @Test
+    fun restoreRestoresOnlyExistingIds() {
+        val id = repo.add("keep")
+        repo.notes.await { it.size == 1 }
+        repo.delete(listOf(id))
+        repo.notes.await { n -> n.single().deletedAt != null }
+
+        repo.restore(listOf("bogus", id))
+
+        assertThat(repo.notes.await { n -> n.single().deletedAt == null }.map { it.id }).containsExactly(id)
+    }
+
+    @Test
+    fun purgeSkipsNoteRestoredOnAnotherDevice() {
+        val now = Instant.now()
+        val id = repo.add("restored elsewhere")
+        repo.notes.await { it.size == 1 }
+        val ref =
+            db
+                .collection("users")
+                .document(auth.currentUser!!.uid)
+                .collection("notes")
+                .document(id)
+        runBlocking { ref.update("deletedAt", now.minus(Duration.ofDays(31)).toTimestamp()).await() }
+        repo.notes.await { n -> n.single().deletedAt != null }
+        clearDeletedAtOnServer(auth.currentUser!!.uid, id)
+
+        runBlocking { repo.purgeTrash(now) }
+
+        assertThat(runBlocking { ref.get(Source.CACHE).await() }.exists()).isTrue()
+    }
+
+    @Test
     fun addDropsUnknownExtraLabelId() {
         repo.add("x", listOf("bogus"))
 
@@ -270,6 +302,27 @@ class FirestoreNoteRepositoryTest {
             db = FirebaseFirestore.getInstance(app)
             auth.useEmulator(HOST, 9099)
             db.useEmulator(HOST, 8080)
+        }
+
+        /** Simulates another device: clears deletedAt through the emulator REST API (admin token bypasses rules). */
+        private fun clearDeletedAtOnServer(
+            uid: String,
+            noteId: String,
+        ) {
+            val path = "users/$uid/notes/$noteId"
+            val base = "http://$HOST:8080/v1/projects/$PROJECT/databases/(default)/documents"
+            val url = URL("$base/$path?updateMask.fieldPaths=deletedAt")
+            (url.openConnection() as HttpURLConnection).run {
+                requestMethod = "PATCH"
+                connectTimeout = HTTP_TIMEOUT_MS
+                readTimeout = HTTP_TIMEOUT_MS
+                doOutput = true
+                setRequestProperty("Authorization", "Bearer owner")
+                setRequestProperty("Content-Type", "application/json")
+                outputStream.use { it.write("""{"fields":{"deletedAt":{"nullValue":null}}}""".toByteArray()) }
+                check(responseCode in HTTP_OK) { "emulator patch failed: $responseCode" }
+                disconnect()
+            }
         }
 
         private fun clearEmulatorData() {
