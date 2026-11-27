@@ -35,6 +35,7 @@ description: Futaba の実装タスク（Issue / 計画の Task N）を1つ実�
 - **`node scripts/gradlew.mjs --stop` を実行しない**（Gradle の常駐プロセスは全作業フォルダで共有されており、他のエージェントの検査を落とす）。常駐プロセスが壊れた場合は `--no-daemon` で回避し、報告に書く。
 - 端末（エミュレータ）と Firebase エミュレータは全エージェントで共有。**使ってよいと指示されたときだけ使う**。使う場合も `adb` で他の instrumentation が動いていたら 90 秒待って再試行し、他のプロセスを止めない。`pnpm check:device` は調整役がまとめて走らせる。
 - `--no-verify` 禁止。静的に検査できる規約は lint 設定へ（AGENTS.md ではなく）。
+- **`firebase-debug.log` / `firestore-debug.log` を表示（cat・抜粋・grep 結果の出力）しない。** Firebase CLI はプロセスの環境変数を丸ごと書き出すため、API キー等の秘密情報が漏れる。ポート競合などの調査は `netstat` やプロセス一覧で行う。環境変数（`env`・`printenv`・`$env:`）も表示しない。
 
 ## 報告
 
