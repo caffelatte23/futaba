@@ -5,9 +5,12 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
 import app.cash.turbine.test
 import com.google.common.truth.Truth.assertThat
+import io.github.caffelatte23.futaba.core.data.NoteRepository
 import io.github.caffelatte23.futaba.core.data.UserPreferencesRepository
 import io.github.caffelatte23.futaba.core.domain.labelUsage
 import io.github.caffelatte23.futaba.core.domain.suggestLabels
+import io.github.caffelatte23.futaba.core.model.Label
+import io.github.caffelatte23.futaba.core.model.Note
 import io.github.caffelatte23.futaba.core.model.NoteFilter
 import io.github.caffelatte23.futaba.testing.FakeNoteRepository
 import io.github.caffelatte23.futaba.testing.MainDispatcherRule
@@ -17,6 +20,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -169,12 +173,37 @@ class StreamViewModelTest {
         }
 
     @Test
-    fun pendingDraftFlushedOnDemand() =
+    fun flushAdoptsCurrentFieldText() =
         runTest {
             val vm = vm()
-            vm.onDraftChange("abc")
-            vm.flushDraft() // no virtual time advanced: the debounce has not fired
-            assertThat(prefs.draft.first()).isEqualTo("abc")
+            vm.onDraftChange("old") // the ViewModel has not yet seen the field's latest edit
+            vm.flushDraft("newer")
+            assertThat(vm.draftNow()).isEqualTo("newer")
+            assertThat(prefs.draft.first()).isEqualTo("newer")
+        }
+
+    @Test
+    fun staleFlushCannotOverwriteClearAfterSend() =
+        runTest {
+            val vm = vm()
+            vm.onDraftChange("idea")
+            vm.flushDraft("idea")
+            assertThat(vm.send("idea")).isTrue()
+            vm.flushDraft("") // a late flush must persist the latest intent, not older text
+            advanceUntilIdle()
+            assertThat(prefs.draft.first()).isEmpty()
+        }
+
+    @Test
+    fun composerReadyWithoutNotesOrLabels() =
+        runTest {
+            val silent =
+                object : NoteRepository by repo {
+                    override val notes: Flow<List<Note>> = emptyFlow()
+                    override val labels: Flow<List<Label>> = emptyFlow()
+                }
+            val vm = StreamViewModel(silent, prefs, uid, CoroutineScope(main.dispatcher), NoteFilter.All)
+            vm.state.test { assertThat(expectMostRecentItem().draftLoaded).isTrue() }
         }
 
     @Test

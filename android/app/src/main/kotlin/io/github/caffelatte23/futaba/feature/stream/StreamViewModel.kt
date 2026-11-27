@@ -26,9 +26,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -82,6 +85,7 @@ class StreamViewModel
         private val draft = MutableStateFlow("")
         private val loaded = MutableStateFlow(false)
         private var startupFocusTaken = false
+        private val writeLock = Mutex()
 
         // The saved draft is read once, before input is accepted; only then do edits get persisted.
         init {
@@ -90,13 +94,17 @@ class StreamViewModel
                 loaded.value = true
                 draft.collectLatest {
                     delay(DRAFT_SAVE_DELAY_MS)
-                    prefs.setDraft(it)
+                    writeLatest()
                 }
             }
         }
 
+        // Start with empty lists so the composer never waits for Firestore's first emission.
+        private val notesOrEmpty = repo.notes.onStart { emit(emptyList()) }
+        private val labelsOrEmpty = repo.labels.onStart { emit(emptyList()) }
+
         val state: StateFlow<StreamUiState> =
-            combine(repo.notes, repo.labels, draft, uid, loaded) { all, labels, text, id, ready ->
+            combine(notesOrEmpty, labelsOrEmpty, draft, uid, loaded) { all, labels, text, id, ready ->
                 val shown = filterNotes(all, filter)
                 val usage = labelUsage(all)
                 val prefix = trailingHashtag.find(text)?.groupValues?.get(1)
@@ -130,9 +138,18 @@ class StreamViewModel
             if (loaded.value) draft.value = text
         }
 
-        /** Persists the current draft now, in a scope that outlives the screen (the debounce may not have fired). */
-        fun flushDraft() {
-            if (loaded.value) appScope.launch { prefs.setDraft(draft.value) }
+        // Every draft write goes through here: it reads the draft inside the lock, so whichever write runs last
+        // persists the latest intent and an older flush can never overwrite a newer value (e.g. the clear after send).
+        private suspend fun writeLatest() = writeLock.withLock { prefs.setDraft(draft.value) }
+
+        /**
+         * Adopts [fieldText] (the field's content, which may be newer than what [onDraftChange] has delivered)
+         * and persists it in a scope that outlives the screen.
+         */
+        fun flushDraft(fieldText: String = draft.value) {
+            if (!loaded.value) return
+            draft.value = fieldText
+            appScope.launch { writeLatest() }
         }
 
         override fun onCleared() = flushDraft()
@@ -143,7 +160,7 @@ class StreamViewModel
             if (body.isEmpty() || uid.value == null || !loaded.value) return false
             repo.add(body, (filter as? NoteFilter.ByLabel)?.let { listOf(it.labelId) }.orEmpty())
             draft.value = ""
-            flushDraft()
+            flushDraft("")
             return true
         }
     }
