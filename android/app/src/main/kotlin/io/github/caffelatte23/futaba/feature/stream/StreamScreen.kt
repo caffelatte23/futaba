@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.input.clearText
 import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
@@ -45,6 +44,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.NavKey
 import io.github.caffelatte23.futaba.R
 import io.github.caffelatte23.futaba.core.data.PendingUndo
+import io.github.caffelatte23.futaba.core.data.SharedSnippet
 import io.github.caffelatte23.futaba.core.designsystem.FutabaMono
 import io.github.caffelatte23.futaba.core.domain.dayHeader
 import io.github.caffelatte23.futaba.core.model.NoteFilter
@@ -54,6 +54,8 @@ import io.github.caffelatte23.futaba.navigation.Search
 import io.github.caffelatte23.futaba.navigation.Settings
 import io.github.caffelatte23.futaba.navigation.Stream
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -70,12 +72,12 @@ fun StreamScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     // The field is (re)created only after the draft is hydrated, starting from the current draft.
-    val composer = remember(state.draftLoaded) { ComposerState(viewModel.draftNow(), state.draftLoaded) }
+    val composer = remember(viewModel, state.draftLoaded) { viewModel.newComposer(state.draftLoaded) }
     ComposerEffects(
         composer,
-        viewModel::draftNow,
-        viewModel::onDraftChange,
-        viewModel::flushDraft,
+        viewModel.sharedSnippets,
+        viewModel::syncComposer,
+        viewModel::flushComposer,
         viewModel.focusRequested,
     )
     val snackbar = remember { SnackbarHostState() }
@@ -83,7 +85,11 @@ fun StreamScreen(
     UndoSnackbarEffect(undo, snackbar, viewModel::now, viewModel::restore, viewModel::clearUndo)
     val drawer = rememberDrawerState(DrawerValue.Closed)
     val scope = rememberCoroutineScope()
-    DrawerBackAndFallback(drawer, state.filterMissing, onFallback = { onNavigate(Stream(NoteFilter.All)) })
+    val navigate: (NavKey) -> Unit = {
+        viewModel.flushComposer(composer)
+        onNavigate(it)
+    }
+    DrawerBackAndFallback(drawer, state.filterMissing, onFallback = { navigate(Stream(NoteFilter.All)) })
     ModalNavigationDrawer(
         drawerState = drawer,
         modifier = modifier,
@@ -91,8 +97,8 @@ fun StreamScreen(
             StreamDrawer(
                 content = remember(filter, state.drawerLabels) { DrawerContent(filter, state.drawerLabels) },
                 drawer = drawer,
-                flushDraft = { composer.textIfReady()?.let(viewModel::flushDraft) },
-                onNavigate = onNavigate,
+                onReselect = { viewModel.flushComposer(composer) },
+                onNavigate = navigate,
             )
         },
     ) {
@@ -107,20 +113,15 @@ fun StreamScreen(
                 title = streamTitle(filter, state.labelNames),
                 count = state.count,
                 onMenu = { scope.launch { drawer.open() } },
-                onSearch = { onNavigate(Search) },
+                onSearch = { navigate(Search) },
             )
-            StreamList(state, { onNavigate(Detail(it)) }, Modifier.weight(1f))
+            StreamList(state, { navigate(Detail(it)) }, Modifier.weight(1f))
             SnackbarHost(snackbar)
             Composer(
                 composer = composer,
                 canSend = state.canSend,
                 suggestions = remember(state.suggestions, state.usage) { Suggestions(state.suggestions, state.usage) },
-                onSend = {
-                    if (viewModel.send(composer.text.text.toString())) {
-                        composer.text.clearText()
-                        composer.focusRequester.requestFocus()
-                    }
-                },
+                onSend = { if (viewModel.sendComposer(composer)) composer.focusRequester.requestFocus() },
             )
         }
     }
@@ -140,7 +141,7 @@ private fun streamTitle(
 private fun StreamDrawer(
     content: DrawerContent,
     drawer: DrawerState,
-    flushDraft: () -> Unit,
+    onReselect: () -> Unit,
     onNavigate: (NavKey) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -148,8 +149,12 @@ private fun StreamDrawer(
     FutabaDrawer(
         content = content,
         onSelect = { next ->
-            flushDraft()
-            if (next == content.current) scope.launch { drawer.close() } else onNavigate(Stream(next))
+            if (next == content.current) {
+                onReselect()
+                scope.launch { drawer.close() }
+            } else {
+                onNavigate(Stream(next))
+            }
         },
         onManageLabels = {
             close()
@@ -178,26 +183,24 @@ private fun DrawerBackAndFallback(
 @Composable
 private fun ComposerEffects(
     composer: ComposerState,
-    draftNow: () -> String,
-    onDraftChange: (String) -> Unit,
-    flushDraft: (String) -> Unit,
+    sharedSnippets: StateFlow<List<SharedSnippet>>,
+    syncComposer: (ComposerState) -> Unit,
+    flushComposer: (ComposerState) -> Unit,
     focusRequested: Flow<Unit>,
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
     val windowInfo = LocalWindowInfo.current
-    val currentDraft by rememberUpdatedState(draftNow)
-    val changeDraft by rememberUpdatedState(onDraftChange)
-    val flush by rememberUpdatedState(flushDraft)
+    val sync by rememberUpdatedState(syncComposer)
+    val flush by rememberUpdatedState(flushComposer)
 
-    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { composer.textIfReady()?.let(flush) }
-    LaunchedEffect(composer) {
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { flush(composer) }
+    LaunchedEffect(composer, sharedSnippets) {
         if (!composer.enabled) return@LaunchedEffect
-        snapshotFlow { composer.text.text.toString() }.collect { text ->
-            // The initial field value and the programmatic clear already match the ViewModel.
-            if (text != currentDraft()) changeDraft(text)
-        }
+        snapshotFlow { composer.text.text.toString() }
+            .combine(sharedSnippets) { _, _ -> Unit }
+            .collect { sync(composer) }
     }
-    LaunchedEffect(composer) {
+    LaunchedEffect(composer, focusRequested) {
         if (!composer.enabled) return@LaunchedEffect
         focusRequested.collect {
             // The IME ignores show requests until the window has focus (cold start).

@@ -92,7 +92,11 @@ class CaptureWidget : GlanceAppWidget() {
 }
 
 private fun captureAction(context: Context) =
-    actionStartActivity(Intent(context, MainActivity::class.java).putExtra(EXTRA_FOCUS_COMPOSER, true))
+    actionStartActivity(
+        Intent(context, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            .putExtra(EXTRA_FOCUS_COMPOSER, true),
+    )
 
 @Composable
 private fun CompactCaptureWidget(modifier: GlanceModifier = GlanceModifier) {

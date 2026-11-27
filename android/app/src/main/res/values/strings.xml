@@ -4,6 +4,10 @@
     <string name="widget_description">最近のアイデアを表示して、新しいアイデアを書く</string>
     <string name="widget_new_idea">新しいアイデア</string>
     <string name="widget_empty">アイデアはまだありません</string>
+    <string name="share_added">Futabaに追加しました</string>
+    <string name="share_draft_saved">下書きに保存しました</string>
+    <string name="share_draft_failed">下書きを保存できませんでした</string>
+    <string name="capture_tile_label">アイデアを書く</string>
     <string name="settings_title">設定</string>
     <string name="settings_back">戻る</string>
     <string name="settings_sync">同期</string>

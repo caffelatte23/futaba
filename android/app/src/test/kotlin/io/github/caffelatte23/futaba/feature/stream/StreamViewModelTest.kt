@@ -1,5 +1,8 @@
 package io.github.caffelatte23.futaba.feature.stream
 
+import androidx.compose.foundation.text.input.TextFieldBuffer
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.ui.text.TextRange
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
@@ -175,6 +178,89 @@ class StreamViewModelTest {
         runTest {
             prefs.setDraft("saved")
             assertThat(vm().draftNow()).isEqualTo("saved")
+        }
+
+    @Test
+    fun shareWhileStreamOpenUpdatesComposerDraft() =
+        runTest {
+            uid.value = null
+            val vm = vm()
+            vm.state.test {
+                val composer = vm.newComposer(enabled = true)
+                composer.text.edit { append("existing") }
+                vm.syncComposer(composer)
+                drafts.append("shared")
+                vm.syncComposer(composer)
+                advanceUntilIdle()
+
+                assertThat(composer.textIfReady()).isEqualTo("existing\n\nshared")
+                assertThat(expectMostRecentItem().draft).isEqualTo("existing\n\nshared")
+                assertThat(vm.draftNow()).isEqualTo("existing\n\nshared")
+                assertThat(prefs.draft.first()).isEqualTo("existing\n\nshared")
+            }
+        }
+
+    @Test
+    fun shareDuringUnsyncedTypingKeepsBoth() =
+        runTest {
+            prefs.setDraft("existing")
+            val vm = vm()
+            val composer = vm.newComposer(enabled = true)
+            composer.text.edit { append(" typed") }
+            drafts.append("shared")
+            drafts.append("another share")
+
+            vm.syncComposer(composer)
+            vm.syncComposer(composer)
+            advanceUntilIdle()
+
+            val combined = "existing typed\n\nshared\n\nanother share"
+            assertThat(composer.textIfReady()).isEqualTo(combined)
+            assertThat(vm.draftNow()).isEqualTo(combined)
+            assertThat(prefs.draft.first()).isEqualTo(combined)
+        }
+
+    @Test
+    fun shareDuringCompositionKeepsBoth() =
+        runTest {
+            val vm = vm()
+            val composer = vm.newComposer(enabled = true)
+            composer.text.appendComposingText("typing")
+            assertThat(composer.text.composition).isEqualTo(TextRange(0, 6))
+            vm.syncComposer(composer)
+            drafts.append("shared")
+
+            vm.syncComposer(composer)
+            assertThat(composer.textIfReady()).isEqualTo("typing\n\nshared")
+            assertThat(composer.text.composition).isNull()
+            assertThat(composer.text.selection).isEqualTo(TextRange("typing\n\nshared".length))
+
+            composer.text.edit { append(" next") }
+            vm.syncComposer(composer)
+            advanceUntilIdle()
+            assertThat(prefs.draft.first()).isEqualTo("typing\n\nshared next")
+        }
+
+    @Test
+    fun shareAppliedOnceAfterRehydration() =
+        runTest {
+            prefs.setDraft("saved")
+            val unmounted = vm()
+            drafts.append("shared")
+
+            val remounted = unmounted.newComposer(enabled = true)
+            val rehydrated = vm()
+            val composer = rehydrated.newComposer(enabled = true)
+            assertThat(remounted.textIfReady()).isEqualTo("saved\n\nshared")
+            assertThat(composer.textIfReady()).isEqualTo("saved\n\nshared")
+            val shareIntent = drafts.latestIntent.value
+            rehydrated.syncComposer(composer)
+            rehydrated.syncComposer(composer)
+            advanceUntilIdle()
+
+            assertThat(composer.textIfReady()).isEqualTo("saved\n\nshared")
+            assertThat(prefs.draft.first()).isEqualTo("saved\n\nshared")
+            assertThat(drafts.latestIntent.value).isEqualTo(shareIntent)
         }
 
     @Test
@@ -433,4 +519,26 @@ class StreamViewModelTest {
             assertThat(prefs.draft.first()).isEqualTo("saved")
             assertThat(ComposerState("x", enabled = true).textIfReady()).isEqualTo("x")
         }
+}
+
+// Compose's IME edit API is internal. Use it here to exercise real composition in the JVM test.
+private fun TextFieldState.appendComposingText(text: String) {
+    val edit = javaClass.methods.single { it.name.startsWith("editAsUser\$") && it.parameterCount == 4 }
+    val undoBehavior =
+        checkNotNull(edit.parameterTypes[2].enumConstants).single {
+            (it as Enum<*>).name ==
+                "MergeIfPossible"
+        }
+    val apply: (TextFieldBuffer) -> Unit = { buffer ->
+        val start = buffer.length
+        buffer.append(text)
+        val compose =
+            buffer.javaClass.methods.single {
+                it.name.startsWith(
+                    "setComposition\$",
+                ) && it.parameterCount == 3
+            }
+        compose.invoke(buffer, start, buffer.length, emptyList<Any>())
+    }
+    edit.invoke(this, null, true, undoBehavior, apply)
 }

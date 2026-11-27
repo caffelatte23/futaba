@@ -104,6 +104,7 @@ class StreamViewModel
         private val draft = MutableStateFlow("")
         private val pendingDraft = MutableStateFlow<DraftIntent?>(null)
         private val loaded = MutableStateFlow(false)
+        val sharedSnippets = drafts.sharedSnippets
 
         init {
             viewModelScope.launch {
@@ -174,20 +175,42 @@ class StreamViewModel
             undoBus.clear(undo)
         }
 
-        /** Current draft, for a recreated text field to start from. */
         fun draftNow(): String = draft.value
+
+        fun newComposer(enabled: Boolean): ComposerState {
+            val initial = drafts.latestIntent.value
+            return ComposerState(initial?.text ?: draftNow(), enabled, hydratedThrough = initial?.seq ?: 0L)
+        }
+
+        fun syncComposer(composer: ComposerState) {
+            if (!composer.enabled) return
+            val edit = composer.takeDraftEdit(sharedSnippets.value)
+            if (edit != null) {
+                onDraftChange(edit)
+            } else {
+                // A remount may have hydrated from a share that arrived while the screen was away.
+                draft.value = composer.text.text.toString()
+            }
+            drafts.consumeSharedSnippets(composer.sharedThrough)
+        }
+
+        fun flushComposer(composer: ComposerState) {
+            syncComposer(composer)
+            flushDraft(null)
+        }
 
         fun onDraftChange(text: String) {
             if (loaded.value) recordDraft(text)
         }
 
         /**
-         * Adopts [fieldText] (the field's content, which may be newer than what [onDraftChange] has delivered)
-         * and persists it in a scope that outlives the screen.
+         * Persists the most recent local edit in a scope that outlives the screen.
+         * [fieldText] carries any edit that the field observer has yet to deliver.
          */
-        fun flushDraft(fieldText: String) {
+        fun flushDraft(fieldText: String?) {
             if (!loaded.value) return
-            persistInAppScope(recordDraft(fieldText))
+            val pending = fieldText?.let(::recordDraft) ?: pendingDraft.value
+            pending?.let(::persistInAppScope)
         }
 
         private fun recordDraft(text: String): DraftIntent {
@@ -203,6 +226,13 @@ class StreamViewModel
 
         override fun onCleared() {
             pendingDraft.value?.let(::persistInAppScope)
+        }
+
+        fun sendComposer(composer: ComposerState): Boolean {
+            syncComposer(composer)
+            val accepted = composer.textIfReady()?.let(::send) ?: false
+            if (accepted) composer.clearAfterSend()
+            return accepted
         }
 
         /** Sends [text] (the field content); returns whether it was accepted. The draft is cleared only then. */
