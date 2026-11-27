@@ -47,6 +47,9 @@ class ComposerState(
 ) {
     val text = TextFieldState(initial, TextRange(initial.length))
     val focusRequester = FocusRequester()
+
+    /** The field content, or null while the composer is not yet initialized from the saved draft. */
+    fun textIfReady(): String? = if (enabled) text.text.toString() else null
 }
 
 private const val MAX_LINES = 8

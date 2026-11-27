@@ -7,6 +7,7 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
+import io.github.caffelatte23.futaba.core.data.DraftStore
 import io.github.caffelatte23.futaba.core.data.NoteRepository
 import io.github.caffelatte23.futaba.core.data.UserPreferencesRepository
 import io.github.caffelatte23.futaba.core.domain.filterNotes
@@ -30,8 +31,6 @@ import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -73,6 +72,7 @@ class StreamViewModel
     constructor(
         private val repo: NoteRepository,
         private val prefs: UserPreferencesRepository,
+        private val drafts: DraftStore,
         @CurrentUid private val uid: StateFlow<String?>,
         @ApplicationScope private val appScope: CoroutineScope,
         @Assisted private val filter: NoteFilter,
@@ -85,7 +85,6 @@ class StreamViewModel
         private val draft = MutableStateFlow("")
         private val loaded = MutableStateFlow(false)
         private var startupFocusTaken = false
-        private val writeLock = Mutex()
 
         // The saved draft is read once, before input is accepted; only then do edits get persisted.
         init {
@@ -93,8 +92,9 @@ class StreamViewModel
                 draft.value = prefs.draft.first()
                 loaded.value = true
                 draft.collectLatest {
+                    val seq = drafts.nextSeq()
                     delay(DRAFT_SAVE_DELAY_MS)
-                    writeLatest()
+                    drafts.write(it, seq)
                 }
             }
         }
@@ -138,10 +138,6 @@ class StreamViewModel
             if (loaded.value) draft.value = text
         }
 
-        // Every draft write goes through here: it reads the draft inside the lock, so whichever write runs last
-        // persists the latest intent and an older flush can never overwrite a newer value (e.g. the clear after send).
-        private suspend fun writeLatest() = writeLock.withLock { prefs.setDraft(draft.value) }
-
         /**
          * Adopts [fieldText] (the field's content, which may be newer than what [onDraftChange] has delivered)
          * and persists it in a scope that outlives the screen.
@@ -149,7 +145,8 @@ class StreamViewModel
         fun flushDraft(fieldText: String = draft.value) {
             if (!loaded.value) return
             draft.value = fieldText
-            appScope.launch { writeLatest() }
+            val seq = drafts.nextSeq() // taken now: a later intent always outranks this write, wherever it runs
+            appScope.launch { drafts.write(fieldText, seq) }
         }
 
         override fun onCleared() = flushDraft()

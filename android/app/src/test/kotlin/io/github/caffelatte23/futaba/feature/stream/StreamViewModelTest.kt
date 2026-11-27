@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.emptyPreferences
 import app.cash.turbine.test
 import com.google.common.truth.Truth.assertThat
+import io.github.caffelatte23.futaba.core.data.DraftStore
 import io.github.caffelatte23.futaba.core.data.NoteRepository
 import io.github.caffelatte23.futaba.core.data.UserPreferencesRepository
 import io.github.caffelatte23.futaba.core.domain.labelUsage
@@ -52,9 +53,10 @@ class StreamViewModelTest {
         )
 
     private val prefs = prefsWith(CompletableDeferred(Unit))
+    private val drafts = DraftStore(prefs)
 
     private fun vm(filter: NoteFilter = NoteFilter.All) =
-        StreamViewModel(repo, prefs, uid, CoroutineScope(main.dispatcher), filter)
+        StreamViewModel(repo, prefs, drafts, uid, CoroutineScope(main.dispatcher), filter)
 
     @Test
     fun sendIgnoresBlankText() =
@@ -149,7 +151,15 @@ class StreamViewModelTest {
     fun typingBeforeHydrationIsNotOverwritten() =
         runTest {
             val slow = CompletableDeferred<Unit>()
-            val vm = StreamViewModel(repo, prefsWith(slow), uid, CoroutineScope(main.dispatcher), NoteFilter.All)
+            val vm =
+                StreamViewModel(
+                    repo,
+                    prefsWith(slow),
+                    DraftStore(prefs),
+                    uid,
+                    CoroutineScope(main.dispatcher),
+                    NoteFilter.All,
+                )
             vm.onDraftChange("early")
             vm.state.test {
                 assertThat(expectMostRecentItem().draftLoaded).isFalse()
@@ -202,7 +212,7 @@ class StreamViewModelTest {
                     override val notes: Flow<List<Note>> = emptyFlow()
                     override val labels: Flow<List<Label>> = emptyFlow()
                 }
-            val vm = StreamViewModel(silent, prefs, uid, CoroutineScope(main.dispatcher), NoteFilter.All)
+            val vm = StreamViewModel(silent, prefs, drafts, uid, CoroutineScope(main.dispatcher), NoteFilter.All)
             vm.state.test { assertThat(expectMostRecentItem().draftLoaded).isTrue() }
         }
 
@@ -212,5 +222,40 @@ class StreamViewModelTest {
             val vm = vm()
             assertThat(vm.takeStartupFocus()).isTrue()
             assertThat(vm.takeStartupFocus()).isFalse()
+        }
+
+    @Test
+    fun flushFromClearedViewModelCannotOverwriteNewerDraft() =
+        runTest {
+            val old = vm()
+            val oldSeq = drafts.nextSeq() // the old ViewModel's flush captured its intent earlier...
+            val replacement = vm()
+            replacement.onDraftChange("idea")
+            assertThat(replacement.send("idea")).isTrue() // ...then the replacement cleared after send
+            drafts.write("stale", oldSeq) // ...and the old flush finally runs
+            assertThat(prefs.draft.first()).isEmpty()
+            assertThat(old.draftNow()).isNotNull()
+        }
+
+    @Test
+    fun draftStoreDropsOlderSeq() =
+        runTest {
+            val a = drafts.nextSeq()
+            val b = drafts.nextSeq()
+            drafts.write("b", b)
+            drafts.write("a", a)
+            assertThat(prefs.draft.first()).isEqualTo("b")
+        }
+
+    @Test
+    fun stopBeforeComposerReadyDoesNotEraseDraft() =
+        runTest {
+            prefs.setDraft("saved")
+            val vm = vm()
+            val notReady = ComposerState("", enabled = false) // hydrated VM, composer not yet rebuilt
+            notReady.textIfReady()?.let(vm::flushDraft)
+            assertThat(notReady.textIfReady()).isNull()
+            assertThat(prefs.draft.first()).isEqualTo("saved")
+            assertThat(ComposerState("x", enabled = true).textIfReady()).isEqualTo("x")
         }
 }

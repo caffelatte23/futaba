@@ -56,7 +56,7 @@ fun StreamScreen(
     val keyboard = LocalSoftwareKeyboardController.current
     val windowInfo = LocalWindowInfo.current
 
-    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.flushDraft(composer.text.text.toString()) }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { composer.textIfReady()?.let(viewModel::flushDraft) }
     LaunchedEffect(composer) {
         if (!composer.enabled) return@LaunchedEffect
         snapshotFlow { composer.text.text.toString() }.collect(viewModel::onDraftChange)
