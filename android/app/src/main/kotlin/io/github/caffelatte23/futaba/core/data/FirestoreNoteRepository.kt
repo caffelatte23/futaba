@@ -23,6 +23,7 @@ import io.github.caffelatte23.futaba.di.ApplicationScope
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
@@ -31,6 +32,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.retryWhen
@@ -195,6 +197,10 @@ class FirestoreNoteRepository
                 )
             }
 
+        // Snapshot decoding and label reconciliation never run on the collector's (UI) thread.
+        @Suppress("InjectDispatcher") // one fixed Default dispatcher, as for the application scope
+        private val decodeContext = Dispatchers.Default
+
         override val notes: Flow<List<Note>> =
             perUser(emptyList()) { u ->
                 val noteSnapshots = u.collection("notes").orderBy("createdAt", Query.Direction.DESCENDING).snapshots()
@@ -204,19 +210,27 @@ class FirestoreNoteRepository
                         val note = doc.toNote()
                         note.copy(labelIds = note.labelIds.filter { it in known })
                     }
-                }
+                }.flowOn(decodeContext)
             }
 
         override val labels: Flow<List<Label>> =
             perUser(emptyList()) { u ->
-                u.collection("labels").snapshots().map { s -> s.documents.map { it.toLabel() }.sortedBy(Label::order) }
+                u
+                    .collection("labels")
+                    .snapshots()
+                    .map { s ->
+                        s.documents.map { it.toLabel() }.sortedBy(Label::order)
+                    }.flowOn(decodeContext)
             }
 
         override val pendingWrites: Flow<Int> =
             perUser(0) { u ->
-                u.collection("notes").snapshots(MetadataChanges.INCLUDE).map { s ->
-                    s.documents.count { it.metadata.hasPendingWrites() }
-                }
+                u
+                    .collection("notes")
+                    .snapshots(MetadataChanges.INCLUDE)
+                    .map { s ->
+                        s.documents.count { it.metadata.hasPendingWrites() }
+                    }.flowOn(decodeContext)
             }
 
         init {
