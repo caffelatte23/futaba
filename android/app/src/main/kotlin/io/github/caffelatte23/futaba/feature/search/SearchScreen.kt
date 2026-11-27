@@ -4,7 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,6 +12,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -81,12 +81,11 @@ fun SearchScreen(
             SearchField(field, focus, Modifier.weight(1f).padding(end = 12.dp))
         }
         if (state.chips.isNotEmpty()) {
-            FlowRow(
-                Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            LazyRow(
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                state.chips.forEach { chip ->
+                items(state.chips, key = { it.id }) { chip ->
                     FilterChipItem(chip, chip.id == state.selectedLabelId) { viewModel.toggleLabel(chip.id) }
                 }
             }
@@ -154,7 +153,7 @@ private fun SearchResults(
     onOpenNote: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    if (state.query.isBlank() && state.selectedLabelId == null) {
+    if (!state.searching) {
         Box(modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
             Text(
                 "ラベルは本文に #ことば と書くと自動で付きます",
