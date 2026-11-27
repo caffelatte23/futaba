@@ -22,10 +22,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 import javax.inject.Singleton
 
 private const val TAG = "AuthRepository"
+private const val LINK_TIMEOUT_MS = 30_000L
 
 sealed interface LinkResult {
     data object Linked : LinkResult
@@ -113,8 +115,13 @@ class AuthRepository
             refreshCredential: (suspend () -> AuthCredential)?,
         ): LinkResult =
             try {
-                user.linkWithCredential(credential).await()
-                LinkResult.Linked
+                val linked = withTimeoutOrNull(LINK_TIMEOUT_MS) { user.linkWithCredential(credential).await() }
+                if (linked != null) {
+                    LinkResult.Linked
+                } else {
+                    Log.w(TAG, "Google linking timed out")
+                    LinkResult.Failed(auth.app.applicationContext.getString(R.string.settings_sync_failed))
+                }
             } catch (_: FirebaseAuthUserCollisionException) {
                 migration.merge(user, credential, refreshCredential)
             }

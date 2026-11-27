@@ -67,11 +67,21 @@ class AuthMergeTest {
         source.seedNote("another", "second anonymous note", "anonymous-idea", "work")
 
         val repository = AuthRepository(auth, db)
+        val appContext = auth.app.applicationContext
+        val appsBeforeMerge = FirebaseApp.getApps(appContext).map { it.name }
+        val failingMigration = GoogleAccountMigration(auth, db) { error("Secondary Firestore setup failed") }
+        assertThat(
+            repository.linkGoogleCredential(credential, failingMigration),
+        ).isInstanceOf(LinkResult.Failed::class.java)
+        assertThat(repository.uid.value).isEqualTo(anonymous.uid)
+        assertThat(FirebaseApp.getApps(appContext).map { it.name }).containsExactlyElementsIn(appsBeforeMerge)
+
         val migration =
             GoogleAccountMigration(auth, db) { secondaryDb ->
                 configureMergeFirestoreEmulator(secondaryDb, enabled = true)
             }
         assertThat(repository.linkGoogleCredential(credential, migration)).isEqualTo(LinkResult.Merged(2))
+        assertThat(FirebaseApp.getApps(appContext).map { it.name }).containsExactlyElementsIn(appsBeforeMerge)
         assertThat(repository.uid.value).isEqualTo(google.uid)
         assertThat(checkNotNull(auth.currentUser).getIdToken(true).await().token).isNotEmpty()
         assertMergedDocuments(destination)

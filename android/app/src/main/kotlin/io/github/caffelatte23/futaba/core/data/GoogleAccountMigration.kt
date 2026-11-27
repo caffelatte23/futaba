@@ -31,30 +31,11 @@ internal class GoogleAccountMigration(
     private val firestore: FirebaseFirestore,
     private val configureSecondary: (FirebaseFirestore) -> Unit = { configureMergeFirestoreEmulator(it) },
 ) {
-    // AuthRepository serializes migration attempts. Keep one secondary app available until the handoff succeeds.
-    private var secondaryApp: FirebaseApp? = null
-
     suspend fun merge(
         anonymous: FirebaseUser,
         credential: AuthCredential,
         refreshCredential: (suspend () -> AuthCredential)?,
     ): LinkResult {
-        val mainData = FirestoreAccountMerge(firestore)
-        val copied =
-            copyToGoogle(anonymous, credential, mainData)
-                ?: return LinkResult.Failed(auth.app.applicationContext.getString(R.string.settings_sync_failed))
-        val secondary = checkNotNull(secondaryApp)
-        val secondaryAuth = FirebaseAuth.getInstance(secondary)
-
-        cleanup(anonymous, mainData, copied.source)
-        signInMain(credential, copied.googleUid, secondaryAuth, refreshCredential)
-        secondaryAuth.signOut()
-        secondary.delete()
-        secondaryApp = null
-        return LinkResult.Merged(copied.noteCount)
-    }
-
-    private fun createSecondary(): FirebaseApp {
         val app = auth.app
         val secondary =
             FirebaseApp.initializeApp(
@@ -62,6 +43,25 @@ internal class GoogleAccountMigration(
                 app.options,
                 "futaba-merge-${UUID.randomUUID()}",
             )
+        try {
+            val mainData = FirestoreAccountMerge(firestore)
+            val copied =
+                copyToGoogle(anonymous, credential, mainData, secondary)
+                    ?: return LinkResult.Failed(app.applicationContext.getString(R.string.settings_sync_failed))
+            cleanup(anonymous, mainData, copied.source)
+            signInMain(credential, copied.googleUid, FirebaseAuth.getInstance(secondary), refreshCredential)
+            return LinkResult.Merged(copied.noteCount)
+        } finally {
+            withContext(NonCancellable) {
+                runCatching { FirebaseAuth.getInstance(secondary).signOut() }
+                    .onFailure { Log.w(TAG, "Couldn't sign out of the secondary FirebaseApp", it) }
+                runCatching { secondary.delete() }
+                    .onFailure { Log.w(TAG, "Couldn't delete the secondary FirebaseApp", it) }
+            }
+        }
+    }
+
+    private fun secondaryFirestore(secondary: FirebaseApp): FirebaseFirestore {
         val secondaryDb = FirebaseFirestore.getInstance(secondary)
         configureSecondary(secondaryDb)
         secondaryDb.firestoreSettings =
@@ -69,7 +69,7 @@ internal class GoogleAccountMigration(
                 .Builder(secondaryDb.firestoreSettings)
                 .setLocalCacheSettings(MemoryCacheSettings.newBuilder().build())
                 .build()
-        return secondary
+        return secondaryDb
     }
 
     @Suppress("TooGenericExceptionCaught") // Any copy failure leaves the anonymous account intact.
@@ -77,19 +77,16 @@ internal class GoogleAccountMigration(
         anonymous: FirebaseUser,
         credential: AuthCredential,
         mainData: FirestoreAccountMerge,
+        secondary: FirebaseApp,
     ): CopiedMerge? =
         try {
             withTimeoutOrNull(COPY_TIMEOUT_MS) {
                 firestore.waitForPendingWrites().await()
                 val source = mainData.read(anonymous.uid)
-                val secondary = secondaryApp ?: createSecondary().also { secondaryApp = it }
+                val secondaryData = FirestoreAccountMerge(secondaryFirestore(secondary))
                 val secondaryAuth = FirebaseAuth.getInstance(secondary)
                 val googleUid = checkNotNull(secondaryAuth.signInWithCredential(credential).await().user).uid
                 check(anonymous.uid != googleUid)
-                val secondaryDb = FirebaseFirestore.getInstance(secondary)
-                // A previous timed-out batch may still be pending. Await it before counting existing copies.
-                secondaryDb.waitForPendingWrites().await()
-                val secondaryData = FirestoreAccountMerge(secondaryDb)
                 CopiedMerge(source, googleUid, secondaryData.copy(anonymous.uid, googleUid, source))
             }.also { if (it == null) Log.w(TAG, "Copy to Google timed out") }
         } catch (e: CancellationException) {

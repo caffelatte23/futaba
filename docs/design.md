@@ -83,7 +83,8 @@ Googleアカウントは端末間で同じものを見るためだけに使う�
 
 - 初回は Firebase Auth の匿名ログイン
 - 同期オン時に Credential Manager で Google の ID トークンを取得 → `GoogleAuthProvider.getCredential` → `linkWithCredential`。uid が変わらないのでデータ移行不要
-- そのGoogleアカウントが既に別uidに紐付いている場合（`FirebaseAuthUserCollisionException`、2台目の端末など）は、メインの FirebaseApp で匿名側の未送信書き込みを待ち、メモとラベルを読み取る。別の FirebaseApp で Google にサインインし、決定的なIDで Google 側にバッチコピーする。ラベルは大文字小文字を区別せず名前で統合し、メモのラベルIDを付け替える。コピー確定後、メインの FirebaseApp が匿名の権限で元のデータとユーザーの削除を試みる。続いて同じ credential でメインの FirebaseApp を Google にサインインさせ、成功後に別の FirebaseApp を破棄する。トークンが失効していれば Credential Manager で一度だけ取り直す
+- そのGoogleアカウントが既に別uidに紐付いている場合（`FirebaseAuthUserCollisionException`、2台目の端末など）は、メインの FirebaseApp で匿名側の未送信書き込みを待ち、メモとラベルを読み取る。別の FirebaseApp で Google にサインインし、決定的なIDで Google 側にバッチコピーする。ラベルは大文字小文字を区別せず名前で統合し、メモのラベルIDを付け替える。コピー確定後、メインの FirebaseApp が匿名の権限で元のデータとユーザーの削除を試みる。続いて同じ credential でメインの FirebaseApp を Google にサインインさせる。トークンが失効していれば Credential Manager で一度だけ取り直す。統合の試行ごとに別の FirebaseApp を作り、成功・失敗・キャンセルのいずれでもサインアウトと破棄を試みる
+- `linkWithCredential` の応答が30秒以内に得られない場合は、設定画面に同期失敗を表示する
 - コピーに失敗した場合、匿名側のデータとユーザーは保持される。コピー確定から匿名側の削除までに終了した場合は、再試行時に同じIDを使ってコピーを再開する。匿名ユーザーの削除後、Google にサインインする前に終了した場合は、次回の `ensureSignedIn` で新しい匿名ユーザーが作られる。コピー済みのデータは Google 側に残り、同じ Google アカウントで再同期すると表示される
 - 注意: 匿名ログインは初回だけネットワークが要る。オフライン初回起動では uid が無いので、入力は下書きとして端末に保持し、ログイン成功後に保存する
 
