@@ -3,7 +3,9 @@ package io.github.caffelatte23.futaba.core.data
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -25,10 +27,12 @@ class DraftStore
     ) {
         private val seq = AtomicLong()
         private val intent = MutableStateFlow<DraftIntent?>(null)
+        private val sharedDraftVersion = MutableStateFlow(0L)
         private val lock = Mutex()
         private var lastWritten = 0L
 
         val latestIntent = intent.asStateFlow()
+        val latestSharedDraftVersion = sharedDraftVersion.asStateFlow()
 
         fun nextSeq(): Long = seq.incrementAndGet()
 
@@ -40,6 +44,24 @@ class DraftStore
             return registered
         }
 
+        @Suppress("RedundantSuspendModifier") // Flow.first and withContext suspend.
+        suspend fun append(text: String) =
+            lock.withLock {
+                val saved = intent.value?.text ?: prefs.draft.first()
+                withContext(NonCancellable) {
+                    val appended =
+                        checkNotNull(
+                            intent.updateAndGet { current ->
+                                val draft = current?.text ?: saved
+                                val combined = if (draft.isBlank()) text else "$draft\n\n$text"
+                                DraftIntent(combined, nextSeq())
+                            },
+                        )
+                    sharedDraftVersion.value = appended.seq
+                    persist(appended.text, appended.seq)
+                }
+            }
+
         suspend fun write(
             text: String,
             seq: Long,
@@ -47,9 +69,16 @@ class DraftStore
             if (seq > lastWritten) {
                 // Once a write starts, cancellation must not leave disk ahead of lastWritten.
                 withContext(NonCancellable) {
-                    prefs.setDraft(text)
-                    lastWritten = seq
+                    persist(text, seq)
                 }
             }
+        }
+
+        private suspend fun persist(
+            text: String,
+            seq: Long,
+        ) {
+            prefs.setDraft(text)
+            lastWritten = seq
         }
     }

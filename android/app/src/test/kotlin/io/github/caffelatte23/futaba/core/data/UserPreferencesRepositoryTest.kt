@@ -57,4 +57,16 @@ class UserPreferencesRepositoryTest {
             repo.setDraft("offline")
             assertThat(repo.draft.first()).isEqualTo("offline")
         }
+
+    @Test
+    fun appendsShareAfterPendingDraftAndIgnoresOlderWrite() =
+        runTest {
+            val drafts = DraftStore(repo)
+            val pending = drafts.registerIntent("Existing draft")
+            drafts.append("Shared text")
+            drafts.write(pending.text, pending.seq)
+
+            assertThat(repo.draft.first()).isEqualTo("Existing draft\n\nShared text")
+            assertThat(drafts.latestIntent.value?.text).isEqualTo("Existing draft\n\nShared text")
+        }
 }
