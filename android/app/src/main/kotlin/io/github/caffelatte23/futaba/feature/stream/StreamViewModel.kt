@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filter
@@ -104,6 +105,7 @@ class StreamViewModel
         private val draft = MutableStateFlow("")
         private val pendingDraft = MutableStateFlow<DraftIntent?>(null)
         private val loaded = MutableStateFlow(false)
+        val draftText: StateFlow<String> = draft.asStateFlow()
 
         init {
             viewModelScope.launch {
@@ -112,6 +114,12 @@ class StreamViewModel
                     drafts.latestIntent.value?.text ?: saved
                 }
                 loaded.value = true
+                launch {
+                    drafts.latestSharedDraftVersion.filter { it > 0L }.collect {
+                        // A new local edit may already be newer than the append.
+                        drafts.latestIntent.value?.let { draft.value = it.text }
+                    }
+                }
                 pendingDraft.collectLatest { intent ->
                     if (intent == null) return@collectLatest
                     delay(DRAFT_SAVE_DELAY_MS)
@@ -182,12 +190,13 @@ class StreamViewModel
         }
 
         /**
-         * Adopts [fieldText] (the field's content, which may be newer than what [onDraftChange] has delivered)
-         * and persists it in a scope that outlives the screen.
+         * Persists the most recent local edit in a scope that outlives the screen.
+         * [fieldText] carries any edit that the field observer has yet to deliver.
          */
-        fun flushDraft(fieldText: String) {
+        fun flushDraft(fieldText: String?) {
             if (!loaded.value) return
-            persistInAppScope(recordDraft(fieldText))
+            val pending = fieldText?.let(::recordDraft) ?: pendingDraft.value
+            pending?.let(::persistInAppScope)
         }
 
         private fun recordDraft(text: String): DraftIntent {

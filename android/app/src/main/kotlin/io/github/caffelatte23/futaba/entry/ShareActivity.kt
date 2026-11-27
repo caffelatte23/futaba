@@ -11,10 +11,10 @@ import io.github.caffelatte23.futaba.core.data.AuthRepository
 import io.github.caffelatte23.futaba.core.data.DraftStore
 import io.github.caffelatte23.futaba.core.data.NoteRepository
 import io.github.caffelatte23.futaba.di.ApplicationScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import java.io.IOException
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -53,13 +53,16 @@ class ShareActivity : ComponentActivity() {
         }
     }
 
+    @Suppress("TooGenericExceptionCaught") // Any draft save failure needs visible feedback.
     private fun saveDraft(text: String) {
         appScope.launch(Dispatchers.Main.immediate) {
             try {
                 drafts.append(text)
                 showToast(R.string.share_draft_saved)
-            } catch (error: IOException) {
-                Log.w("ShareActivity", "Draft save failed", error)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                Log.w("ShareActivity", "Failed to save shared text to draft", error)
                 showToast(R.string.share_draft_failed)
             } finally {
                 finish()

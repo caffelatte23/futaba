@@ -178,6 +178,22 @@ class StreamViewModelTest {
         }
 
     @Test
+    fun shareWhileStreamOpenUpdatesComposerDraft() =
+        runTest {
+            uid.value = null
+            val vm = vm()
+            vm.state.test {
+                vm.onDraftChange("existing")
+                drafts.append("shared")
+                advanceUntilIdle()
+
+                assertThat(expectMostRecentItem().draft).isEqualTo("existing\n\nshared")
+                assertThat(vm.draftNow()).isEqualTo("existing\n\nshared")
+                assertThat(prefs.draft.first()).isEqualTo("existing\n\nshared")
+            }
+        }
+
+    @Test
     fun replacementViewModelHydratesFromPendingIntentNotDisk() =
         runTest {
             prefs.setDraft("saved")

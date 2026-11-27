@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
@@ -47,9 +48,23 @@ class ComposerState(
 ) {
     val text = TextFieldState(initial, TextRange(initial.length))
     val focusRequester = FocusRequester()
+    private var lastFieldText = initial
 
     /** The field content, or null while the composer is not yet initialized from the saved draft. */
     fun textIfReady(): String? = if (enabled) text.text.toString() else null
+
+    /** Only edits originating in the field can replace the draft on stop or navigation. */
+    fun takeDraftEdit(): String? {
+        val current = textIfReady()
+        if (current == null || current == lastFieldText) return null
+        lastFieldText = current
+        return current
+    }
+
+    fun replaceDraft(draft: String) {
+        if (draft != text.text.toString()) text.setTextAndPlaceCursorAtEnd(draft)
+        lastFieldText = draft
+    }
 }
 
 private const val MAX_LINES = 8

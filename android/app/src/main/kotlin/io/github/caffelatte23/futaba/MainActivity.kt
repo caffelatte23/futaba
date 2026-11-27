@@ -1,5 +1,6 @@
 package io.github.caffelatte23.futaba
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -8,12 +9,10 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
 import io.github.caffelatte23.futaba.core.data.ComposerFocusRequests
-import io.github.caffelatte23.futaba.core.data.DraftStore
 import io.github.caffelatte23.futaba.core.data.ThemeMode
 import io.github.caffelatte23.futaba.core.data.UserPreferencesRepository
 import io.github.caffelatte23.futaba.core.designsystem.FutabaTheme
@@ -36,7 +35,6 @@ class MainActivity : ComponentActivity() {
     lateinit var appScope: CoroutineScope
 
     @Inject lateinit var focusRequests: ComposerFocusRequests
-    @Inject lateinit var drafts: DraftStore
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -48,7 +46,6 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             val theme by preferences.theme.collectAsStateWithLifecycle(ThemeMode.System)
-            val sharedDraftVersion by drafts.latestSharedDraftVersion.collectAsStateWithLifecycle()
             val darkTheme =
                 when (theme) {
                     ThemeMode.System -> isSystemInDarkTheme()
@@ -57,13 +54,16 @@ class MainActivity : ComponentActivity() {
                 }
             FutabaTheme(darkTheme = darkTheme) {
                 Surface(color = MaterialTheme.colorScheme.background) {
-                    // Reload the composer when a share changes the draft from outside this activity.
-                    key(sharedDraftVersion) {
-                        FutabaNavDisplay()
-                    }
+                    FutabaNavDisplay()
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra(EXTRA_FOCUS_COMPOSER, false)) focusRequests.request()
     }
 
     override fun onStop() {

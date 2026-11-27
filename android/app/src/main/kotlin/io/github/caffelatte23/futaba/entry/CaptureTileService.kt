@@ -16,8 +16,7 @@ class CaptureTileService : TileService() {
         super.onClick()
         val capture =
             Intent(this, MainActivity::class.java).apply {
-                // Restart the standard activity to open a fresh composer even on repeat taps.
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
                 putExtra(EXTRA_FOCUS_COMPOSER, true)
             }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {

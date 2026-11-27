@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.text.input.clearText
 import androidx.compose.material3.DrawerState
 import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
@@ -54,6 +53,8 @@ import io.github.caffelatte23.futaba.navigation.Search
 import io.github.caffelatte23.futaba.navigation.Settings
 import io.github.caffelatte23.futaba.navigation.Stream
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -73,7 +74,7 @@ fun StreamScreen(
     val composer = remember(state.draftLoaded) { ComposerState(viewModel.draftNow(), state.draftLoaded) }
     ComposerEffects(
         composer,
-        viewModel::draftNow,
+        viewModel.draftText,
         viewModel::onDraftChange,
         viewModel::flushDraft,
         viewModel.focusRequested,
@@ -91,7 +92,7 @@ fun StreamScreen(
             StreamDrawer(
                 content = remember(filter, state.drawerLabels) { DrawerContent(filter, state.drawerLabels) },
                 drawer = drawer,
-                flushDraft = { composer.textIfReady()?.let(viewModel::flushDraft) },
+                flushDraft = { viewModel.flushDraft(composer.takeDraftEdit()) },
                 onNavigate = onNavigate,
             )
         },
@@ -117,7 +118,7 @@ fun StreamScreen(
                 suggestions = remember(state.suggestions, state.usage) { Suggestions(state.suggestions, state.usage) },
                 onSend = {
                     if (viewModel.send(composer.text.text.toString())) {
-                        composer.text.clearText()
+                        composer.replaceDraft("")
                         composer.focusRequester.requestFocus()
                     }
                 },
@@ -178,26 +179,31 @@ private fun DrawerBackAndFallback(
 @Composable
 private fun ComposerEffects(
     composer: ComposerState,
-    draftNow: () -> String,
+    draftText: StateFlow<String>,
     onDraftChange: (String) -> Unit,
-    flushDraft: (String) -> Unit,
+    flushDraft: (String?) -> Unit,
     focusRequested: Flow<Unit>,
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
     val windowInfo = LocalWindowInfo.current
-    val currentDraft by rememberUpdatedState(draftNow)
     val changeDraft by rememberUpdatedState(onDraftChange)
     val flush by rememberUpdatedState(flushDraft)
 
-    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { composer.textIfReady()?.let(flush) }
-    LaunchedEffect(composer) {
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { flush(composer.takeDraftEdit()) }
+    LaunchedEffect(composer, draftText) {
         if (!composer.enabled) return@LaunchedEffect
-        snapshotFlow { composer.text.text.toString() }.collect { text ->
-            // The initial field value and the programmatic clear already match the ViewModel.
-            if (text != currentDraft()) changeDraft(text)
-        }
+        snapshotFlow { composer.text.text.toString() to composer.text.composition }
+            .combine(draftText) { _, _ -> Unit }
+            .collect {
+                val edit = composer.takeDraftEdit()
+                val draft = draftText.value
+                when {
+                    edit != null && edit != draft -> changeDraft(edit)
+                    edit == null && composer.text.composition == null -> composer.replaceDraft(draft)
+                }
+            }
     }
-    LaunchedEffect(composer) {
+    LaunchedEffect(composer, focusRequested) {
         if (!composer.enabled) return@LaunchedEffect
         focusRequested.collect {
             // The IME ignores show requests until the window has focus (cold start).
