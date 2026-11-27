@@ -37,6 +37,10 @@ class AccountMergeTest {
         val retry = planAccountMerge("anonymous", source, afterCopy)
         assertThat(retry.labels).isEmpty()
         assertThat(retry.notes).isEmpty()
+        assertThat(retry.noteCount).isEqualTo(1)
+
+        val afterPartialCleanup = source.copy(notes = emptyMap())
+        assertThat(planAccountMerge("anonymous", afterPartialCleanup, afterCopy).noteCount).isEqualTo(1)
     }
 
     private fun label(name: String) = mapOf("name" to name, "color" to "", "order" to 0L)

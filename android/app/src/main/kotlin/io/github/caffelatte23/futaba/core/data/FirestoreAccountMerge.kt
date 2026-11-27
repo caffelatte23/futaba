@@ -24,12 +24,12 @@ internal class FirestoreAccountMerge(
         sourceUid: String,
         destinationUid: String,
         source: MergeDocuments,
-    ) {
+    ): Int {
         val user = user(destinationUid)
-        val existing = MergeDocuments(user.collection("notes").read(), user.collection("labels").read())
-        val plan = planAccountMerge(sourceUid, source, existing)
+        val plan = planAccountMerge(sourceUid, source, read(destinationUid))
         write(user.collection("labels"), plan.labels)
         write(user.collection("notes"), plan.notes)
+        return plan.noteCount
     }
 
     suspend fun delete(

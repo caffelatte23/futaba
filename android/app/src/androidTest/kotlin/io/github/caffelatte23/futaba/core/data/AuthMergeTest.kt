@@ -12,7 +12,7 @@ import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.firestore.DocumentReference
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.Source
-import io.github.caffelatte23.futaba.di.configureMergeEmulators
+import io.github.caffelatte23.futaba.di.configureMergeFirestoreEmulator
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withTimeout
@@ -34,7 +34,8 @@ class AuthMergeTest {
                 val app = createTestApp(id)
                 val auth = FirebaseAuth.getInstance(app)
                 val db = FirebaseFirestore.getInstance(app)
-                configureMergeEmulators(auth, db, enabled = true)
+                auth.useEmulator(HOST, 9099)
+                configureMergeFirestoreEmulator(db, enabled = true)
                 try {
                     verifyCollision(auth, db, id)
                 } finally {
@@ -67,11 +68,12 @@ class AuthMergeTest {
 
         val repository = AuthRepository(auth, db)
         val migration =
-            GoogleAccountMigration(auth, db) { secondaryAuth, secondaryDb ->
-                configureMergeEmulators(secondaryAuth, secondaryDb, enabled = true)
+            GoogleAccountMigration(auth, db) { secondaryDb ->
+                configureMergeFirestoreEmulator(secondaryDb, enabled = true)
             }
         assertThat(repository.linkGoogleCredential(credential, migration)).isEqualTo(LinkResult.Merged(2))
         assertThat(repository.uid.value).isEqualTo(google.uid)
+        assertThat(checkNotNull(auth.currentUser).getIdToken(true).await().token).isNotEmpty()
         assertMergedDocuments(destination)
         assertAnonymousCollectionsEmpty(anonymous.uid)
     }
@@ -126,7 +128,8 @@ class AuthMergeTest {
                 .Builder()
                 .setProjectId(PROJECT)
                 .setApplicationId("1:1234567890:android:futaba")
-                .setApiKey("fake-api-key")
+                // Auth emulator endpoint listeners are shared by API key across FirebaseApps in this process.
+                .setApiKey("auth-merge-$id")
                 .build()
         return FirebaseApp.initializeApp(context, options, "auth-merge-test-$id")
     }

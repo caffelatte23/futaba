@@ -22,12 +22,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
-import kotlinx.coroutines.withTimeoutOrNull
 import javax.inject.Inject
 import javax.inject.Singleton
 
 private const val TAG = "AuthRepository"
-private const val LINK_TIMEOUT_MS = 90_000L
 
 sealed interface LinkResult {
     data object Linked : LinkResult
@@ -77,7 +75,7 @@ class AuthRepository
         @Suppress("TooGenericExceptionCaught") // Credentials and Firebase expose different failure types.
         suspend fun linkGoogle(context: Context): LinkResult =
             try {
-                linkGoogleCredential(getGoogleCredential(context))
+                linkGoogleCredential(getGoogleCredential(context)) { getGoogleCredential(context) }
             } catch (_: GetCredentialCancellationException) {
                 LinkResult.Cancelled
             } catch (_: NoCredentialException) {
@@ -89,18 +87,19 @@ class AuthRepository
                 LinkResult.Failed(context.getString(R.string.settings_sync_failed))
             }
 
+        private val googleMigration = GoogleAccountMigration(auth, firestore)
+
         internal suspend fun linkGoogleCredential(
             credential: AuthCredential,
-            migration: GoogleAccountMigration = GoogleAccountMigration(auth, firestore),
+            migration: GoogleAccountMigration = googleMigration,
+            refreshCredential: (suspend () -> AuthCredential)? = null,
         ): LinkResult =
             signInLock.withLock {
                 try {
-                    withTimeoutOrNull(LINK_TIMEOUT_MS) {
-                        ensureSignedInLocked()
-                        val user = checkNotNull(auth.currentUser)
-                        check(user.isAnonymous)
-                        linkOrMerge(user, credential, migration)
-                    } ?: LinkResult.Failed(auth.app.applicationContext.getString(R.string.settings_sync_failed))
+                    ensureSignedInLocked()
+                    val user = checkNotNull(auth.currentUser)
+                    check(user.isAnonymous)
+                    linkOrMerge(user, credential, migration, refreshCredential)
                 } finally {
                     publishUser()
                 }
@@ -111,12 +110,13 @@ class AuthRepository
             user: FirebaseUser,
             credential: AuthCredential,
             migration: GoogleAccountMigration,
+            refreshCredential: (suspend () -> AuthCredential)?,
         ): LinkResult =
             try {
                 user.linkWithCredential(credential).await()
                 LinkResult.Linked
-            } catch (e: FirebaseAuthUserCollisionException) {
-                migration.merge(user, e.updatedCredential ?: credential)
+            } catch (_: FirebaseAuthUserCollisionException) {
+                migration.merge(user, credential, refreshCredential)
             }
 
         suspend fun signOut(): Boolean =

@@ -83,7 +83,8 @@ Googleアカウントは端末間で同じものを見るためだけに使う�
 
 - 初回は Firebase Auth の匿名ログイン
 - 同期オン時に Credential Manager で Google の ID トークンを取得 → `GoogleAuthProvider.getCredential` → `linkWithCredential`。uid が変わらないのでデータ移行不要
-- そのGoogleアカウントが既に別uidに紐付いている場合（`FirebaseAuthUserCollisionException`、2台目の端末など）: 別の FirebaseApp でそのcredentialを使って `signInWithCredential`。各uidのデータは所有者のセッションから読み書きし、匿名uidのメモとラベルをGoogle側へバッチコピーする。ラベルは大文字小文字を区別せず名前で統合し、メモのラベルIDを付け替える。コピー確定後にアプリをGoogle側へ切り替え、匿名側のデータとユーザーを削除する
+- そのGoogleアカウントが既に別uidに紐付いている場合（`FirebaseAuthUserCollisionException`、2台目の端末など）は、メインの FirebaseApp で匿名側の未送信書き込みを待ち、メモとラベルを読み取る。別の FirebaseApp で Google にサインインし、決定的なIDで Google 側にバッチコピーする。ラベルは大文字小文字を区別せず名前で統合し、メモのラベルIDを付け替える。コピー確定後、メインの FirebaseApp が匿名の権限で元のデータとユーザーの削除を試みる。続いて同じ credential でメインの FirebaseApp を Google にサインインさせ、成功後に別の FirebaseApp を破棄する。トークンが失効していれば Credential Manager で一度だけ取り直す
+- コピーに失敗した場合、匿名側のデータとユーザーは保持される。コピー確定から匿名側の削除までに終了した場合は、再試行時に同じIDを使ってコピーを再開する。匿名ユーザーの削除後、Google にサインインする前に終了した場合は、次回の `ensureSignedIn` で新しい匿名ユーザーが作られる。コピー済みのデータは Google 側に残り、同じ Google アカウントで再同期すると表示される
 - 注意: 匿名ログインは初回だけネットワークが要る。オフライン初回起動では uid が無いので、入力は下書きとして端末に保持し、ログイン成功後に保存する
 
 ### 同期・保存（Firestore オフラインキャッシュ方式）
@@ -108,6 +109,7 @@ users/{uid}/notes/{id}
   createdAt: timestamp
   updatedAt: timestamp
   deletedAt: timestamp | null   // ゴミ箱。30日で本削除
+  mergedFromUid?: string        // アカウント統合でコピーしたメモの元の匿名uid
 
 users/{uid}/labels/{id}
   name: string
