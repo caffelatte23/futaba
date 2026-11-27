@@ -31,3 +31,14 @@ object FirebaseModule {
             if (EMULATOR) useEmulator(EMULATOR_HOST, FIRESTORE_PORT)
         }
 }
+
+internal fun configureMergeEmulators(
+    auth: FirebaseAuth,
+    firestore: FirebaseFirestore,
+    enabled: Boolean = EMULATOR,
+) {
+    if (enabled) {
+        auth.useEmulator(EMULATOR_HOST, AUTH_PORT)
+        firestore.useEmulator(EMULATOR_HOST, FIRESTORE_PORT)
+    }
+}

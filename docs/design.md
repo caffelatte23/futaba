@@ -83,7 +83,7 @@ Googleアカウントは端末間で同じものを見るためだけに使う�
 
 - 初回は Firebase Auth の匿名ログイン
 - 同期オン時に Credential Manager で Google の ID トークンを取得 → `GoogleAuthProvider.getCredential` → `linkWithCredential`。uid が変わらないのでデータ移行不要
-- そのGoogleアカウントが既に別uidに紐付いている場合（`FirebaseAuthUserCollisionException`、2台目の端末など）: そのcredentialで `signInWithCredential` し、匿名uidのメモを新uidへバッチコピーしてから匿名側を削除（「端末のメモを引き継ぐ」）
+- そのGoogleアカウントが既に別uidに紐付いている場合（`FirebaseAuthUserCollisionException`、2台目の端末など）: 別の FirebaseApp でそのcredentialを使って `signInWithCredential`。各uidのデータは所有者のセッションから読み書きし、匿名uidのメモとラベルをGoogle側へバッチコピーする。ラベルは大文字小文字を区別せず名前で統合し、メモのラベルIDを付け替える。コピー確定後にアプリをGoogle側へ切り替え、匿名側のデータとユーザーを削除する
 - 注意: 匿名ログインは初回だけネットワークが要る。オフライン初回起動では uid が無いので、入力は下書きとして端末に保持し、ログイン成功後に保存する
 
 ### 同期・保存（Firestore オフラインキャッシュ方式）

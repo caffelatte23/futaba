@@ -54,7 +54,7 @@ class FirestoreNoteRepositoryTest {
                 auth.signOut()
                 auth.signInAnonymously().await()
             }
-            repo = FirestoreNoteRepository(db, AuthRepository(auth), scope)
+            repo = FirestoreNoteRepository(db, AuthRepository(auth, db), scope)
         }
 
     @After

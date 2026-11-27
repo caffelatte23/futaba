@@ -8,7 +8,8 @@ plugins {
 }
 
 // google-services.json is gitignored (per-developer Firebase config); build without it when absent.
-if (file("google-services.json").exists()) {
+val hasGoogleServices = file("google-services.json").exists()
+if (hasGoogleServices) {
     apply(
         plugin =
             libs.plugins.google.services
@@ -28,6 +29,7 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        if (!hasGoogleServices) resValue("string", "default_web_client_id", "")
     }
 
     buildTypes {
@@ -46,6 +48,7 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+        resValues = !hasGoogleServices
     }
 
     compileOptions {
