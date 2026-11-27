@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
@@ -84,6 +85,8 @@ data class StreamUiState(
     val sheet: LabelSheetUi? = null,
     /** All labels in `order`, for the label sheet. */
     val labels: List<Label> = emptyList(),
+    /** False while only the placeholder empty list has been seen (selection is not pruned then). */
+    val notesLoaded: Boolean = false,
 )
 
 private const val DRAFT_SAVE_DELAY_MS = 300L
@@ -117,6 +120,13 @@ class StreamViewModel
         val sharedSnippets = drafts.sharedSnippets
 
         init {
+            // A different account must not inherit the previous one's selection or staged label edits.
+            viewModelScope.launch {
+                uid.drop(1).collect {
+                    selected.value = emptySet()
+                    labelSheet.reset()
+                }
+            }
             viewModelScope.launch {
                 draft.value = drafts.latestIntent.value?.text ?: prefs.draft.first().let { saved ->
                     // A different ViewModel can register an intent while the disk read is suspended.
@@ -131,8 +141,9 @@ class StreamViewModel
             }
         }
 
-        // Start with empty lists so the composer never waits for Firestore's first emission.
-        private val notesOrEmpty = repo.notes.onStart { emit(emptyList()) }
+        // Start with an empty placeholder so the composer never waits for Firestore's first emission;
+        // only emissions flagged true are real data (the placeholder must not prune the selection).
+        private val notesOrEmpty = repo.notes.map { it to true }.onStart { emit(emptyList<Note>() to false) }
 
         // Labels count as loaded only for a signed-in user, after an emission for that user.
         @OptIn(ExperimentalCoroutinesApi::class)
@@ -157,7 +168,14 @@ class StreamViewModel
             )
 
         private val baseState: Flow<StreamUiState> =
-            combine(notesOrEmpty, labelsOrEmpty, draft, uid, loaded) { all, (labels, labelsLoaded), text, id, ready ->
+            combine(
+                notesOrEmpty,
+                labelsOrEmpty,
+                draft,
+                uid,
+                loaded,
+            ) { notesPair, (labels, labelsLoaded), text, id, ready ->
+                val (all, notesLoaded) = notesPair
                 val shown = filterNotes(all, filter)
                 val usage = labelUsage(all)
                 val labelViewReady = labelsLoaded && labels.any { (filter as? NoteFilter.ByLabel)?.labelId == it.id }
@@ -178,6 +196,7 @@ class StreamViewModel
                     filterMissing = labelsLoaded && filter is NoteFilter.ByLabel && !labelViewReady,
                     labelViewReady = labelViewReady,
                     labels = labels.sortedBy(Label::order),
+                    notesLoaded = notesLoaded,
                 )
             }
 
@@ -185,6 +204,10 @@ class StreamViewModel
         val state: StateFlow<StreamUiState> =
             combine(baseState, selected, labelSheet.state) { base, picked, sheet ->
                 val notes = (base.pinned + base.sections.flatMap(DaySection::notes)).filter { it.id in picked }
+                if (!base.notesLoaded) {
+                    // Placeholder emission (e.g. after a resubscribe): keep selection and sheet untouched.
+                    return@combine base.copy(selection = picked, sheet = sheet)
+                }
                 // Stored ids are cut to what is shown, so a note that vanishes and returns is not re-selected.
                 if (notes.size != picked.size) selected.value = notes.mapTo(LinkedHashSet(), Note::id)
                 if (notes.isEmpty()) labelSheet.reset()

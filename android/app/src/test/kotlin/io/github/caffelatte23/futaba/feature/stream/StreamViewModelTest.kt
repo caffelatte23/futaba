@@ -42,6 +42,7 @@ import org.junit.Rule
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@Suppress("LargeClass") // one test class per ViewModel
 class StreamViewModelTest {
     @get:Rule val main = MainDispatcherRule()
 
@@ -737,6 +738,64 @@ class StreamViewModelTest {
                 assertThat(s.selection).containsExactly(a)
                 assertThat(repo.setLabelsCalls).isEmpty()
             }
+        }
+
+    @Test
+    fun failedCreateDuringFinishKeepsSheetAndQuery() =
+        runTest {
+            val a = repo.add("a")
+            val l = repo.createLabel("l")
+            val gate = CompletableDeferred<Unit>()
+            val vm = vm(repository = failingCreate(gate, fail = true))
+            vm.state.test {
+                vm.toggleSelect(a)
+                vm.labelSheet.open()
+                vm.labelSheet.toggle(l, LabelCheck.None) // another staged change
+                vm.labelSheet.setQuery("new")
+                vm.labelSheet.create("new")
+                vm.labelSheet.finish() // tapped while the create is still suspended
+                gate.complete(Unit)
+                runCurrent()
+                val s = expectMostRecentItem()
+                assertThat(s.sheet).isNotNull()
+                assertThat(s.sheet!!.createFailed).isTrue()
+                assertThat(s.sheet.query).isEqualTo("new")
+                assertThat(s.selection).containsExactly(a)
+                assertThat(repo.setLabelsCalls).isEmpty()
+            }
+        }
+
+    @Test
+    fun placeholderEmptyListDoesNotClearSelection() =
+        runTest {
+            val a = repo.add("a")
+            var hold: CompletableDeferred<Unit>? = null
+            val slow =
+                object : NoteRepository by repo {
+                    override val notes: Flow<List<Note>> =
+                        flow {
+                            hold?.await() // Firestore's snapshot arrives late after a resubscribe
+                            emitAll(repo.notes)
+                        }
+                }
+            val vm = vm(repository = slow)
+            vm.state.test {
+                vm.toggleSelect(a)
+                vm.labelSheet.open()
+                assertThat(expectMostRecentItem().selection).containsExactly(a)
+                cancelAndIgnoreRemainingEvents()
+            }
+            hold = CompletableDeferred()
+            advanceTimeBy(6_000) // subscription timeout: upstream stops
+            runCurrent()
+            vm.state.test {
+                runCurrent() // placeholder emission, real snapshot still pending
+                hold.complete(Unit)
+                runCurrent()
+                cancelAndIgnoreRemainingEvents()
+            }
+            assertThat(vm.state.value.selection).containsExactly(a)
+            assertThat(vm.labelSheet.state.value).isNotNull()
         }
 }
 

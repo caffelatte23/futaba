@@ -117,7 +117,10 @@ class LabelSheetSession(
     fun finish() {
         if (ui.value == null) return
         scope.launch {
-            pending?.join()
+            val create = pending?.takeIf { it.isActive }
+            create?.join()
+            // A create that failed while finishing keeps the sheet (error, query, staged edits) for retry.
+            if (create != null && ui.value?.createFailed == true) return@launch
             applyStaged()
         }
     }

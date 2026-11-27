@@ -78,6 +78,8 @@ class DetailViewModel
 
         val state: StateFlow<DetailUiState> =
             combine(noteFlow, repo.labels, ready, labelSheet.state) { note, labels, isReady, sheet ->
+                // The sheet belongs to the note: if it disappears, drop the session so it cannot return stale.
+                if (note == null && sheet != null) labelSheet.reset()
                 DetailUiState(note, LabelNames(labels.associate { it.id to it.name }), labels, isReady, sheet)
             }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), DetailUiState())
 
