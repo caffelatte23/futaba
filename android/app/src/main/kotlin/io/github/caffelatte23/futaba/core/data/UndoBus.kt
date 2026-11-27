@@ -19,7 +19,7 @@ private const val UNDO_WINDOW_MS = 5_000L
 /**
  * The 「元に戻す」 offer for the latest deletion (Detail, bulk delete). Lives in a singleton, outside
  * composition, so rotating or navigating while the snackbar is up does not lose it.
- * ponytail: only the latest deletion is kept; a newer delete replaces an older offer.
+ * A deletion while an offer is still open is merged into it and restarts the window.
  */
 @Singleton
 class UndoBus(
@@ -32,7 +32,13 @@ class UndoBus(
     val pending: StateFlow<PendingUndo?> = state
 
     fun postDeleted(ids: List<String>) {
-        state.value = PendingUndo(ids, clock() + UNDO_WINDOW_MS)
+        val now = clock()
+        val open =
+            state.value
+                ?.takeUnless { it.isExpired(now) }
+                ?.ids
+                .orEmpty()
+        state.value = PendingUndo((open + ids).distinct(), now + UNDO_WINDOW_MS)
     }
 
     /** Drops [undo] once acted on or expired; a newer offer stays. */

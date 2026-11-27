@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +38,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation3.runtime.NavKey
 import io.github.caffelatte23.futaba.R
+import io.github.caffelatte23.futaba.core.data.PendingUndo
 import io.github.caffelatte23.futaba.core.designsystem.FutabaMono
 import io.github.caffelatte23.futaba.core.domain.dayHeader
 import io.github.caffelatte23.futaba.core.model.NoteFilter
@@ -80,20 +82,7 @@ fun StreamScreen(
 
     val snackbar = remember { SnackbarHostState() }
     val undo by viewModel.pendingUndo.collectAsStateWithLifecycle()
-    LaunchedEffect(undo) {
-        val offer = undo ?: return@LaunchedEffect
-        // Shown for the time left on the offer (M3 durations are only 4s/10s), then dropped.
-        val left = offer.expiresAt - viewModel.now()
-        val result =
-            if (left > 0) {
-                withTimeoutOrNull(left) {
-                    snackbar.showSnackbar("削除しました", "元に戻す", duration = SnackbarDuration.Indefinite)
-                }
-            } else {
-                null
-            }
-        if (result == SnackbarResult.ActionPerformed) viewModel.restore(offer) else viewModel.clearUndo(offer)
-    }
+    UndoSnackbarEffect(undo, snackbar, viewModel::now, viewModel::restore, viewModel::clearUndo)
 
     Column(
         modifier
@@ -169,4 +158,33 @@ private fun SectionHeader(title: String) {
         style = MaterialTheme.typography.labelLarge,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
+}
+
+/** Shows the pending 「元に戻す」 offer for the time it has left; recreation just resumes it. */
+@Composable
+private fun UndoSnackbarEffect(
+    undo: PendingUndo?,
+    snackbar: SnackbarHostState,
+    now: () -> Long,
+    onRestore: (PendingUndo) -> Unit,
+    onClear: (PendingUndo) -> Unit,
+) {
+    val clock by rememberUpdatedState(now)
+    val restore by rememberUpdatedState(onRestore)
+    val clear by rememberUpdatedState(onClear)
+    LaunchedEffect(undo) {
+        val offer = undo ?: return@LaunchedEffect
+        // M3 durations are only 4s/10s, so wait out the remaining time ourselves, then drop the offer.
+        val left = offer.expiresAt - clock()
+        val message = if (offer.ids.size == 1) "削除しました" else "${offer.ids.size}件削除しました"
+        val result =
+            if (left > 0) {
+                withTimeoutOrNull(left) {
+                    snackbar.showSnackbar(message, "元に戻す", duration = SnackbarDuration.Indefinite)
+                }
+            } else {
+                null
+            }
+        if (result == SnackbarResult.ActionPerformed) restore(offer) else clear(offer)
+    }
 }

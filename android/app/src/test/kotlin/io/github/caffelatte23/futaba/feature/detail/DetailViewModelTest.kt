@@ -89,6 +89,44 @@ class DetailViewModelTest {
         }
 
     @Test
+    fun readyButUnseededScreenDoesNothing() =
+        runTest {
+            val id = repo.add("a")
+            val vm = DetailViewModel(repo, bus, id)
+            // The ViewModel is ready, but the screen still holds its empty placeholder and passes null.
+            assertThat(vm.leave(null)).isFalse()
+            vm.flush(null)
+            vm.delete(null)
+            assertThat(note(id).deletedAt).isNull()
+            assertThat(repo.updates).isEmpty()
+            assertThat(bus.pending.value).isNull()
+        }
+
+    @Test
+    fun secondDeletionMergesIntoOpenOffer() =
+        runTest {
+            val a = repo.add("a")
+            val b = repo.add("b")
+            DetailViewModel(repo, bus, a).delete("a")
+            now = 3_000L
+            DetailViewModel(repo, bus, b).delete("b")
+            val offer = bus.pending.value!!
+            assertThat(offer.ids).containsExactly(a, b)
+            assertThat(offer.expiresAt).isEqualTo(8_000L)
+            repo.restore(offer.ids)
+            assertThat(note(a).deletedAt).isNull()
+            assertThat(note(b).deletedAt).isNull()
+        }
+
+    @Test
+    fun expiredOfferIsNotMerged() {
+        bus.postDeleted(listOf("x"))
+        now = 6_000L
+        bus.postDeleted(listOf("y"))
+        assertThat(bus.pending.value?.ids).containsExactly("y")
+    }
+
+    @Test
     fun flushOnStopPersistsCurrentText() =
         runTest {
             val id = repo.add("a")

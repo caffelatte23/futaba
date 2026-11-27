@@ -69,13 +69,14 @@ fun DetailScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val note = state.note
     // The ViewModel owns the text; the field is (re)created from it once the note has been read.
-    val field = remember(state.ready) { TextFieldState(viewModel.textNow()) }
+    val editor = remember(state.ready) { SeededField(viewModel.textNow(), state.ready) }
+    val field = editor.state
     val leave = {
-        if (!viewModel.leave(field.text.toString())) onBack()
+        if (!viewModel.leave(editor.textIfSeeded())) onBack()
     }
 
     BackHandler(onBack = leave)
-    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.flush(field.text.toString()) }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.flush(editor.textIfSeeded()) }
     val currentOnBack by rememberUpdatedState(onBack)
     LaunchedEffect(viewModel) { viewModel.events.collect { currentOnBack() } }
     LaunchedEffect(field) {
@@ -94,7 +95,7 @@ fun DetailScreen(
             fieldText = { field.text.toString() },
             onBack = leave,
             onTogglePin = viewModel::togglePin,
-            onDelete = { viewModel.delete(field.text.toString()) },
+            onDelete = { viewModel.delete(editor.textIfSeeded()) },
         )
         if (note != null && state.ready) {
             DetailBody(note, field, state.labelNames, Modifier.weight(1f))
@@ -217,4 +218,15 @@ private fun AddLabelChip(onClick: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+}
+
+/** The text field plus whether it was created from the ViewModel's hydrated text (not the empty loading field). */
+private class SeededField(
+    initial: String,
+    private val seeded: Boolean,
+) {
+    val state = TextFieldState(initial)
+
+    /** The field content, or null while it is only the empty placeholder shown before the note loaded. */
+    fun textIfSeeded(): String? = if (seeded) state.text.toString() else null
 }

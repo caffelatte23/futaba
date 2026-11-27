@@ -101,24 +101,24 @@ class DetailViewModel
         }
 
         /** Adopts [fieldText] and writes it now (screen stopped). Blank text is kept but never saved. */
-        fun flush(fieldText: String) {
-            if (!ready.value || finished) return
+        fun flush(fieldText: String?) {
+            if (!ready.value || finished || fieldText == null) return
             text = fieldText
             autosave?.cancel()
             write()
         }
 
         /** Leaving the screen: saves [fieldText], or soft-deletes the note when it was cleared. True when deleted. */
-        fun leave(fieldText: String): Boolean {
-            if (!ready.value || finished) return false
+        fun leave(fieldText: String?): Boolean {
+            if (!ready.value || finished || fieldText == null) return false
             val cleared = fieldText.isBlank()
             if (cleared) delete(fieldText) else flush(fieldText)
             return cleared
         }
 
         /** Saves a non-blank [fieldText] first so undo restores the latest body, then moves the note to the trash. */
-        fun delete(fieldText: String) {
-            if (!ready.value || finished) return
+        fun delete(fieldText: String?) {
+            if (!ready.value || finished || fieldText == null) return
             flush(fieldText)
             finished = true
             autosave?.cancel()
