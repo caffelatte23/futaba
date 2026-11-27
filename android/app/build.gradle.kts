@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
@@ -18,6 +20,14 @@ if (hasGoogleServices) {
     )
 }
 
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties =
+    if (keystorePropertiesFile.isFile) {
+        Properties().apply { keystorePropertiesFile.inputStream().use(::load) }
+    } else {
+        null
+    }
+
 android {
     namespace = "io.github.caffelatte23.futaba"
     compileSdk = 37
@@ -32,6 +42,21 @@ android {
         if (!hasGoogleServices) resValue("string", "default_web_client_id", "")
     }
 
+    val releaseSigning =
+        keystoreProperties?.let { properties ->
+            signingConfigs.create("release") {
+                fun signingProperty(name: String): String =
+                    requireNotNull(properties.getProperty(name)?.takeIf { it.isNotEmpty() }) {
+                        "Missing $name in android/keystore.properties"
+                    }
+
+                storeFile = rootProject.file(signingProperty("storeFile"))
+                storePassword = signingProperty("storePassword")
+                keyAlias = signingProperty("keyAlias")
+                keyPassword = signingProperty("keyPassword")
+            }
+        }
+
     buildTypes {
         debug {
             // Flip to true locally to use the Firebase emulator (host 10.0.2.2).
@@ -42,6 +67,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = releaseSigning
         }
     }
 
