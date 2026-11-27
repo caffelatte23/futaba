@@ -54,7 +54,7 @@ class FirestoreNoteRepositoryTest {
                 auth.signOut()
                 auth.signInAnonymously().await()
             }
-            repo = FirestoreNoteRepository(db, AuthRepository(auth), scope)
+            repo = FirestoreNoteRepository(db, AuthRepository(auth, db), scope)
         }
 
     @After
@@ -71,7 +71,7 @@ class FirestoreNoteRepositoryTest {
     fun addCreatesNoteAndNewLabels() {
         val id = repo.add("案 #アプリ案")
 
-        val notes = repo.notes.await { it.isNotEmpty() }
+        val notes = repo.notes.await { it.size == 1 && it.single().labelIds.isNotEmpty() }
         val labels = repo.labels.await { it.isNotEmpty() }
         assertThat(notes.map { it.id }).containsExactly(id)
         assertThat(labels.map { it.name }).containsExactly("アプリ案")
@@ -85,7 +85,7 @@ class FirestoreNoteRepositoryTest {
 
         repo.add("two #idea")
 
-        val notes = repo.notes.await { it.size == 2 }
+        val notes = repo.notes.await { it.size == 2 && it.all { note -> note.labelIds.isNotEmpty() } }
         assertThat(repo.labels.await { true }).hasSize(1)
         assertThat(notes.flatMap { it.labelIds }).containsExactly(first.id, first.id)
     }
@@ -132,7 +132,7 @@ class FirestoreNoteRepositoryTest {
         repo.add("a #Idea")
         repo.add("b #idea")
 
-        val notes = repo.notes.await { it.size == 2 }
+        val notes = repo.notes.await { it.size == 2 && it.all { note -> note.labelIds.isNotEmpty() } }
         val labels = repo.labels.await { it.isNotEmpty() }
         assertThat(labels).hasSize(1)
         assertThat(notes.flatMap { it.labelIds }).containsExactly(labels.single().id, labels.single().id)
@@ -145,7 +145,12 @@ class FirestoreNoteRepositoryTest {
         repo.setLabels(listOf(id), add = listOf(manual), remove = emptyList())
         repo.updateText(id, "t2 #Foo")
 
-        val note = repo.notes.await { n -> n.singleOrNull()?.text == "t2 #Foo" }.single()
+        val note =
+            repo.notes
+                .await { notes ->
+                    val updated = notes.singleOrNull()
+                    updated?.text == "t2 #Foo" && updated.labelIds.size == 2
+                }.single()
         val names =
             repo.labels
                 .await { it.size == 2 }
@@ -165,7 +170,7 @@ class FirestoreNoteRepositoryTest {
         repo.notes.await { it.isEmpty() }
         repo.add("new #Fresh")
 
-        val note = repo.notes.await { it.size == 1 }.single()
+        val note = repo.notes.await { it.size == 1 && it.single().labelIds.isNotEmpty() }.single()
         val labels = repo.labels.await { it.isNotEmpty() }
         assertThat(labels.map { it.name }).containsExactly("Fresh")
         assertThat(note.labelIds).containsExactly(labels.single().id)
@@ -342,7 +347,12 @@ class FirestoreNoteRepositoryTest {
             repo.setLabels(listOf(id), add = listOf(manual), remove = emptyList())
             repo.updateText(id, "t2 #Foo")
 
-            val note = repo.notes.await { n -> n.singleOrNull()?.text == "t2 #Foo" }.single()
+            val note =
+                repo.notes
+                    .await { notes ->
+                        val updated = notes.singleOrNull()
+                        updated?.text == "t2 #Foo" && updated.labelIds.size == 2
+                    }.single()
             val names =
                 repo.labels
                     .await { it.size == 2 }
@@ -358,7 +368,7 @@ class FirestoreNoteRepositoryTest {
     fun deleteLabelDetachesFromNotes() {
         val id = repo.add("idea #foo")
         val label = repo.labels.await { it.size == 1 }.single()
-        repo.notes.await { it.size == 1 }
+        repo.notes.await { it.size == 1 && label.id in it.single().labelIds }
 
         repo.deleteLabel(label.id)
 

@@ -38,7 +38,12 @@ fun FutabaNavDisplay(
                 // Placeholders: Tasks 8-13 replace these with real screens.
                 entry<Detail> { key -> DetailScreen(key.noteId, onBack = { backStack.removeLastOrNull() }) }
                 entry<Search> { Placeholder("Search") }
-                entry<Settings> { Placeholder("Settings") }
+                entry<Settings> {
+                    io.github.caffelatte23.futaba.feature.settings.SettingsScreen(
+                        onBack = { backStack.removeLastOrNull() },
+                        onTrash = { backStack.add(Trash) },
+                    )
+                }
                 entry<LabelEdit> { Placeholder("LabelEdit") }
                 entry<Trash> { Placeholder("Trash") }
             },

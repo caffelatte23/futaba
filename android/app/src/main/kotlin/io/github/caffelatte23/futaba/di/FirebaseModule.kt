@@ -31,3 +31,11 @@ object FirebaseModule {
             if (EMULATOR) useEmulator(EMULATOR_HOST, FIRESTORE_PORT)
         }
 }
+
+// Firebase Auth inherits the main app's emulator endpoint through the shared API key.
+internal fun configureMergeFirestoreEmulator(
+    firestore: FirebaseFirestore,
+    enabled: Boolean = EMULATOR,
+) {
+    if (enabled) firestore.useEmulator(EMULATOR_HOST, FIRESTORE_PORT)
+}

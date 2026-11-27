@@ -1,4 +1,41 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Futaba</string>
+    <string name="settings_title">設定</string>
+    <string name="settings_back">戻る</string>
+    <string name="settings_sync">同期</string>
+    <string name="settings_google_account">Googleアカウント</string>
+    <string name="settings_unlinked">未連携</string>
+    <string name="settings_sent">すべて送信済み</string>
+    <string name="settings_pending">未送信 %1$d件</string>
+    <string name="settings_google_sync">Googleで同期</string>
+    <string name="settings_sync_title">Googleアカウントで同期</string>
+    <string name="settings_sync_description">この端末にある%1$d件をそのまま引き継ぎます。別の端末でも同じアカウントで開けば、同じ一覧が見られます。</string>
+    <string name="settings_sync_private">自分のアカウント専用の領域に保存。ほかの人からは見えません</string>
+    <string name="settings_sync_offline">電波がなくても書けます。つながったときに自動で送られます</string>
+    <string name="settings_sync_combines">すでに使っているアカウントなら、両方のアイデアを1つの一覧にまとめます</string>
+    <string name="settings_choose_google">Googleアカウントを選ぶ</string>
+    <string name="settings_sync_working">同期中…</string>
+    <string name="settings_sync_later">あとで</string>
+    <string name="settings_sync_done">完了</string>
+    <string name="settings_sync_linked">Googleアカウントと連携しました</string>
+    <string name="settings_sync_merged">メモ %1$d件を引き継ぎました</string>
+    <string name="settings_sync_failed">Googleアカウントと連携できませんでした。もう一度お試しください。</string>
+    <string name="settings_no_google_account">利用できるGoogleアカウントが見つかりませんでした。</string>
+    <string name="settings_data">データ</string>
+    <string name="settings_count">%1$d件</string>
+    <string name="settings_export">Markdownで書き出す</string>
+    <string name="settings_export_saved">Markdownを書き出しました</string>
+    <string name="settings_export_failed">Markdownを書き出せませんでした</string>
+    <string name="settings_trash">最近削除したもの</string>
+    <string name="settings_trash_count">%1$d件 · 30日で消去</string>
+    <string name="settings_display">表示</string>
+    <string name="settings_theme">テーマ</string>
+    <string name="settings_theme_system">端末に合わせる</string>
+    <string name="settings_theme_light">ライト</string>
+    <string name="settings_theme_dark">ダーク</string>
+    <string name="settings_open_keyboard">起動時にキーボードを開く</string>
+    <string name="settings_sign_out">ログアウト</string>
+    <string name="settings_sign_out_description">ログアウトしてもアイデアはアカウントに残ります</string>
+    <string name="settings_anonymous_failed">匿名でのログインに失敗しました</string>
 </resources>
