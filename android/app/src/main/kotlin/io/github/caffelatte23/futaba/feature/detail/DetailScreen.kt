@@ -100,15 +100,9 @@ fun DetailScreen(
             onDelete = { viewModel.delete(editor.textIfSeeded()) },
         )
         if (note != null && state.ready) {
-            var sheetOpen by rememberSaveable { mutableStateOf(false) }
-            DetailBody(note, field, state.labelNames, { sheetOpen = true }, Modifier.weight(1f))
-            if (sheetOpen) {
-                LabelSheet(
-                    content = LabelSheetContent(listOf(note), state.labels),
-                    onCreate = viewModel::createLabel,
-                    onApply = viewModel::applyLabels,
-                    onDismiss = { sheetOpen = false },
-                )
+            DetailBody(note, field, state.labelNames, viewModel.labelSheet::open, Modifier.weight(1f))
+            state.sheet?.let {
+                LabelSheet(LabelSheetContent(listOf(note), state.labels), it, viewModel.labelSheet)
             }
         }
     }

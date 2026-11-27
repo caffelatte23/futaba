@@ -23,6 +23,9 @@ import io.github.caffelatte23.futaba.core.model.Note
 import io.github.caffelatte23.futaba.core.model.NoteFilter
 import io.github.caffelatte23.futaba.di.ApplicationScope
 import io.github.caffelatte23.futaba.di.CurrentUid
+import io.github.caffelatte23.futaba.feature.labels.LabelSheetSession
+import io.github.caffelatte23.futaba.feature.labels.LabelSheetUi
+import io.github.caffelatte23.futaba.feature.labels.labelChecks
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -77,6 +80,8 @@ data class StreamUiState(
     /** Ids of the selected notes (selection mode while non-empty); only notes still shown. */
     val selection: Set<String> = emptySet(),
     val selectedNotes: List<Note> = emptyList(),
+    /** The open label sheet, if any; ends with the selection. */
+    val sheet: LabelSheetUi? = null,
     /** All labels in `order`, for the label sheet. */
     val labels: List<Label> = emptyList(),
 )
@@ -142,6 +147,15 @@ class StreamViewModel
 
         private val selected = MutableStateFlow<Set<String>>(emptySet())
 
+        /** The label sheet over the selection; its baseline is always the current selection and labels. */
+        val labelSheet =
+            LabelSheetSession(
+                scope = viewModelScope,
+                createLabel = repo::createLabel,
+                baseline = { labelChecks(state.value.selectedNotes, state.value.labels) },
+                commit = ::applyLabels,
+            )
+
         private val baseState: Flow<StreamUiState> =
             combine(notesOrEmpty, labelsOrEmpty, draft, uid, loaded) { all, (labels, labelsLoaded), text, id, ready ->
                 val shown = filterNotes(all, filter)
@@ -169,9 +183,16 @@ class StreamViewModel
 
         // Selection is cut down to the notes still shown, so deleted or moved notes drop out by themselves.
         val state: StateFlow<StreamUiState> =
-            combine(baseState, selected) { base, picked ->
+            combine(baseState, selected, labelSheet.state) { base, picked, sheet ->
                 val notes = (base.pinned + base.sections.flatMap(DaySection::notes)).filter { it.id in picked }
-                base.copy(selection = notes.mapTo(LinkedHashSet(), Note::id), selectedNotes = notes)
+                // Stored ids are cut to what is shown, so a note that vanishes and returns is not re-selected.
+                if (notes.size != picked.size) selected.value = notes.mapTo(LinkedHashSet(), Note::id)
+                if (notes.isEmpty()) labelSheet.reset()
+                base.copy(
+                    selection = notes.mapTo(LinkedHashSet(), Note::id),
+                    selectedNotes = notes,
+                    sheet = sheet.takeIf { notes.isNotEmpty() },
+                )
             }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), StreamUiState())
 
         fun toggleSelect(id: String) {
@@ -192,8 +213,6 @@ class StreamViewModel
             if (ids.isNotEmpty() && (add.isNotEmpty() || remove.isNotEmpty())) repo.setLabels(ids, add, remove)
             clearSelection()
         }
-
-        suspend fun createLabel(name: String): String = repo.createLabel(name)
 
         fun deleteSelected() {
             val ids = state.value.selection.toList()

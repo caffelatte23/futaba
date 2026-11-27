@@ -101,7 +101,6 @@ fun StreamScreen(
     }
     DrawerBackAndFallback(drawer, state.filterMissing, onFallback = { navigate(Stream(NoteFilter.All)) })
     BackHandler(enabled = selecting, onBack = viewModel::clearSelection)
-    var sheetOpen by rememberSaveable { mutableStateOf(false) }
     ModalNavigationDrawer(
         drawerState = drawer,
         modifier = modifier,
@@ -126,7 +125,7 @@ fun StreamScreen(
                     remember(viewModel) {
                         SelectionActions(
                             viewModel::clearSelection,
-                            { sheetOpen = true },
+                            viewModel.labelSheet::open,
                             viewModel::pinSelected,
                             viewModel::deleteSelected,
                         )
@@ -151,14 +150,7 @@ fun StreamScreen(
             if (!selecting) StreamComposer(composer, state) { viewModel.sendComposer(composer) }
         }
     }
-    if (sheetOpen && selecting) {
-        LabelSheet(
-            content = LabelSheetContent(state.selectedNotes, state.labels),
-            onCreate = viewModel::createLabel,
-            onApply = viewModel::applyLabels,
-            onDismiss = { sheetOpen = false },
-        )
-    }
+    state.sheet?.let { LabelSheet(LabelSheetContent(state.selectedNotes, state.labels), it, viewModel.labelSheet) }
 }
 
 @Composable
