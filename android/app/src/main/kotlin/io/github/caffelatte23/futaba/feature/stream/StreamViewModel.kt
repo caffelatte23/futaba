@@ -30,7 +30,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filter
@@ -105,7 +104,7 @@ class StreamViewModel
         private val draft = MutableStateFlow("")
         private val pendingDraft = MutableStateFlow<DraftIntent?>(null)
         private val loaded = MutableStateFlow(false)
-        val draftText: StateFlow<String> = draft.asStateFlow()
+        val sharedSnippets = drafts.sharedSnippets
 
         init {
             viewModelScope.launch {
@@ -114,12 +113,6 @@ class StreamViewModel
                     drafts.latestIntent.value?.text ?: saved
                 }
                 loaded.value = true
-                launch {
-                    drafts.latestSharedDraftVersion.filter { it > 0L }.collect {
-                        // A new local edit may already be newer than the append.
-                        drafts.latestIntent.value?.let { draft.value = it.text }
-                    }
-                }
                 pendingDraft.collectLatest { intent ->
                     if (intent == null) return@collectLatest
                     delay(DRAFT_SAVE_DELAY_MS)
@@ -182,8 +175,29 @@ class StreamViewModel
             undoBus.clear(undo)
         }
 
-        /** Current draft, for a recreated text field to start from. */
         fun draftNow(): String = draft.value
+
+        fun newComposer(enabled: Boolean): ComposerState {
+            val initial = drafts.latestIntent.value
+            return ComposerState(initial?.text ?: draftNow(), enabled, hydratedThrough = initial?.seq ?: 0L)
+        }
+
+        fun syncComposer(composer: ComposerState) {
+            if (!composer.enabled) return
+            val edit = composer.takeDraftEdit(sharedSnippets.value)
+            if (edit != null) {
+                onDraftChange(edit)
+            } else {
+                // A remount may have hydrated from a share that arrived while the screen was away.
+                draft.value = composer.text.text.toString()
+            }
+            drafts.consumeSharedSnippets(composer.sharedThrough)
+        }
+
+        fun flushComposer(composer: ComposerState) {
+            syncComposer(composer)
+            flushDraft(null)
+        }
 
         fun onDraftChange(text: String) {
             if (loaded.value) recordDraft(text)
@@ -212,6 +226,13 @@ class StreamViewModel
 
         override fun onCleared() {
             pendingDraft.value?.let(::persistInAppScope)
+        }
+
+        fun sendComposer(composer: ComposerState): Boolean {
+            syncComposer(composer)
+            val accepted = composer.textIfReady()?.let(::send) ?: false
+            if (accepted) composer.clearAfterSend()
+            return accepted
         }
 
         /** Sends [text] (the field content); returns whether it was accepted. The draft is cleared only then. */

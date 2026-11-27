@@ -31,6 +31,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.unit.dp
 import io.github.caffelatte23.futaba.R
+import io.github.caffelatte23.futaba.core.data.SharedSnippet
 import io.github.caffelatte23.futaba.core.designsystem.FutabaMono
 import io.github.caffelatte23.futaba.core.model.Label
 
@@ -45,25 +46,48 @@ data class Suggestions(
 class ComposerState(
     initial: String,
     val enabled: Boolean,
+    hydratedThrough: Long = 0L,
 ) {
     val text = TextFieldState(initial, TextRange(initial.length))
     val focusRequester = FocusRequester()
     private var lastFieldText = initial
+    var sharedThrough = hydratedThrough
+        private set
 
     /** The field content, or null while the composer is not yet initialized from the saved draft. */
     fun textIfReady(): String? = if (enabled) text.text.toString() else null
 
-    /** Only edits originating in the field can replace the draft on stop or navigation. */
-    fun takeDraftEdit(): String? {
-        val current = textIfReady()
-        if (current == null || current == lastFieldText) return null
-        lastFieldText = current
-        return current
+    /** Merges pending shares into the live field before reporting its latest edit. */
+    fun takeDraftEdit(snippets: List<SharedSnippet>): String? {
+        if (!enabled) return null
+        val unseen = snippets.dropWhile { it.seq <= sharedThrough }
+        if (unseen.isNotEmpty()) {
+            // A programmatic text edit commits the composing text and moves the cursor past the share.
+            text.edit {
+                unseen.forEach { snippet ->
+                    if (asCharSequence().isBlank()) {
+                        replace(0, length, "")
+                    } else {
+                        append("\n\n")
+                    }
+                    append(snippet.text)
+                }
+                selection = TextRange(length)
+            }
+            sharedThrough = unseen.last().seq
+        }
+        val current = text.text.toString()
+        return if (unseen.isNotEmpty() || current != lastFieldText) {
+            lastFieldText = current
+            current
+        } else {
+            null
+        }
     }
 
-    fun replaceDraft(draft: String) {
-        if (draft != text.text.toString()) text.setTextAndPlaceCursorAtEnd(draft)
-        lastFieldText = draft
+    fun clearAfterSend() {
+        text.setTextAndPlaceCursorAtEnd("")
+        lastFieldText = ""
     }
 }
 

@@ -18,6 +18,11 @@ data class DraftIntent(
     val seq: Long,
 )
 
+data class SharedSnippet(
+    val seq: Long,
+    val text: String,
+)
+
 /** Tracks the newest draft intent in memory and orders writes across ViewModels. */
 @Singleton
 class DraftStore
@@ -27,12 +32,16 @@ class DraftStore
     ) {
         private val seq = AtomicLong()
         private val intent = MutableStateFlow<DraftIntent?>(null)
-        private val sharedDraftVersion = MutableStateFlow(0L)
+        private val unconsumedShares = MutableStateFlow<List<SharedSnippet>>(emptyList())
         private val lock = Mutex()
         private var lastWritten = 0L
 
         val latestIntent = intent.asStateFlow()
-        val latestSharedDraftVersion = sharedDraftVersion.asStateFlow()
+        val sharedSnippets = unconsumedShares.asStateFlow()
+
+        fun consumeSharedSnippets(through: Long) {
+            unconsumedShares.update { snippets -> snippets.dropWhile { it.seq <= through } }
+        }
 
         fun nextSeq(): Long = seq.incrementAndGet()
 
@@ -57,7 +66,8 @@ class DraftStore
                                 DraftIntent(combined, nextSeq())
                             },
                         )
-                    sharedDraftVersion.value = appended.seq
+                    // Retain each payload even when the flow conflates successive appends.
+                    unconsumedShares.update { it + SharedSnippet(appended.seq, text) }
                     persist(appended.text, appended.seq)
                 }
             }
