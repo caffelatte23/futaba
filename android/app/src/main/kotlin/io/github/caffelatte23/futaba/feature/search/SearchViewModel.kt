@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.shareIn
 import kotlinx.coroutines.flow.stateIn
 import javax.inject.Inject
 import kotlin.coroutines.CoroutineContext
@@ -45,8 +46,10 @@ data class SearchUiState(
 private const val STOP_TIMEOUT_MS = 5_000L
 private const val DEBOUNCE_MS = 150L
 
-private data class Results(
+/** One filtering outcome: the query and label that produced [notes] travel with them. */
+private data class Filtered(
     val query: String,
+    val labelId: String?,
     val notes: List<Note>,
 )
 
@@ -64,12 +67,19 @@ class SearchViewModel
         private val query = MutableStateFlow("")
         private val selected = MutableStateFlow<String?>(null)
 
+        // One upstream subscription shared by the chip and result branches.
+        private val notes =
+            repo.notes
+                .onStart { emit(emptyList()) }
+                .shareIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), replay = 1)
+        private val labels =
+            repo.labels
+                .onStart { emit(emptyList()) }
+                .shareIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), replay = 1)
+
         // Chip metadata depends only on repository updates, never on keystrokes.
         private val chipData =
-            combine(
-                repo.notes.onStart { emit(emptyList()) },
-                repo.labels.onStart { emit(emptyList()) },
-            ) { notes, labels ->
+            combine(notes, labels) { notes, labels ->
                 val usage = labelUsage(notes)
                 labels
                     .map { LabelChipUi(it.id, it.name, usage[it.id] ?: 0) }
@@ -78,11 +88,7 @@ class SearchViewModel
             }.flowOn(workContext)
 
         private val results =
-            combine(
-                repo.notes.onStart { emit(emptyList()) },
-                query.debounce(DEBOUNCE_MS),
-                selected,
-            ) { notes, text, labelId ->
+            combine(notes, query.debounce(DEBOUNCE_MS), selected) { notes, text, labelId ->
                 // Same parsed terms as the matcher: a separator-only query is not a search.
                 val found =
                     if (queryTerms(text).isEmpty() && labelId == null) {
@@ -90,18 +96,18 @@ class SearchViewModel
                     } else {
                         filterNotes(notes, labelId?.let(NoteFilter::ByLabel) ?: NoteFilter.All, text)
                     }
-                Results(text, found)
+                Filtered(text, labelId, found)
             }.flowOn(workContext)
 
         val state: StateFlow<SearchUiState> =
-            combine(chipData, results, selected) { (chips, names), found, labelId ->
+            combine(chipData, results) { (chips, names), found ->
                 SearchUiState(
                     query = found.query,
-                    selectedLabelId = labelId,
+                    selectedLabelId = found.labelId,
                     chips = chips,
                     results = found.notes,
                     labelNames = names,
-                    searching = queryTerms(found.query).isNotEmpty() || labelId != null,
+                    searching = queryTerms(found.query).isNotEmpty() || found.labelId != null,
                 )
             }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), SearchUiState())
 

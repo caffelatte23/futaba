@@ -2,11 +2,16 @@ package io.github.caffelatte23.futaba.feature.search
 
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.SpanStyle
+import app.cash.turbine.Event
 import app.cash.turbine.test
 import com.google.common.truth.Truth.assertThat
+import io.github.caffelatte23.futaba.core.data.NoteRepository
+import io.github.caffelatte23.futaba.core.model.Note
 import io.github.caffelatte23.futaba.testing.FakeNoteRepository
 import io.github.caffelatte23.futaba.testing.MainDispatcherRule
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
@@ -72,6 +77,49 @@ class SearchViewModelTest {
                 assertThat(expectMostRecentItem().results).isEmpty()
                 advanceTimeBy(100)
                 assertThat(expectMostRecentItem().results.map { it.text }).containsExactly("alphabet")
+            }
+        }
+
+    @Test
+    fun repositoryNotesCollectedOnce() =
+        runTest {
+            var subscriptions = 0
+            val counting =
+                object : NoteRepository by repo {
+                    override val notes = repo.notes.onStart { subscriptions++ }
+                }
+            val vm = SearchViewModel(counting, main.dispatcher)
+            vm.state.test {
+                advanceUntilIdle()
+                vm.onQueryChange("a")
+                advanceUntilIdle()
+                cancelAndIgnoreRemainingEvents()
+            }
+            assertThat(subscriptions).isEqualTo(1)
+        }
+
+    @Test
+    fun summaryMatchesResultsAfterChipTap() =
+        runTest {
+            val tagged = repo.add("one #x")
+            repo.add("two")
+            val label =
+                repo.labels
+                    .first()
+                    .single()
+                    .id
+            val vm = vm()
+            vm.state.test {
+                advanceUntilIdle()
+                vm.toggleLabel(label)
+                advanceUntilIdle()
+                vm.toggleLabel(label)
+                advanceUntilIdle()
+                // Every published state: the label shown as applied must describe its results.
+                cancelAndConsumeRemainingEvents().filterIsInstance<Event.Item<SearchUiState>>().forEach {
+                    val state = it.value
+                    if (state.selectedLabelId != null) assertThat(state.results.map(Note::id)).containsExactly(tagged)
+                }
             }
         }
 
