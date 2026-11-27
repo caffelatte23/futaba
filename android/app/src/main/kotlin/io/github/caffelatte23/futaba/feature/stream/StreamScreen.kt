@@ -1,5 +1,6 @@
 package io.github.caffelatte23.futaba.feature.stream
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -12,18 +13,23 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.text.input.clearText
+import androidx.compose.material3.DrawerState
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -43,15 +49,20 @@ import io.github.caffelatte23.futaba.core.designsystem.FutabaMono
 import io.github.caffelatte23.futaba.core.domain.dayHeader
 import io.github.caffelatte23.futaba.core.model.NoteFilter
 import io.github.caffelatte23.futaba.navigation.Detail
+import io.github.caffelatte23.futaba.navigation.LabelEdit
 import io.github.caffelatte23.futaba.navigation.Search
+import io.github.caffelatte23.futaba.navigation.Settings
+import io.github.caffelatte23.futaba.navigation.Stream
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import java.time.LocalDate
 
+// Drawer selection flushes the (global) draft before this entry and its ViewModel are replaced.
 @Composable
 fun StreamScreen(
     filter: NoteFilter,
-    focusComposer: Boolean,
     onNavigate: (NavKey) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: StreamViewModel =
@@ -60,63 +71,153 @@ fun StreamScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     // The field is (re)created only after the draft is hydrated, starting from the current draft.
     val composer = remember(state.draftLoaded) { ComposerState(viewModel.draftNow(), state.draftLoaded) }
+    ComposerEffects(
+        composer,
+        viewModel::draftNow,
+        viewModel::onDraftChange,
+        viewModel::flushDraft,
+        viewModel.focusRequested,
+    )
+    val snackbar = remember { SnackbarHostState() }
+    val undo by viewModel.pendingUndo.collectAsStateWithLifecycle()
+    UndoSnackbarEffect(undo, snackbar, viewModel::now, viewModel::restore, viewModel::clearUndo)
+    val drawer = rememberDrawerState(DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+    DrawerBackAndFallback(drawer, state.filterMissing, onFallback = { onNavigate(Stream(NoteFilter.All)) })
+    ModalNavigationDrawer(
+        drawerState = drawer,
+        modifier = modifier,
+        drawerContent = {
+            StreamDrawer(
+                content = remember(filter, state.drawerLabels) { DrawerContent(filter, state.drawerLabels) },
+                drawer = drawer,
+                flushDraft = { composer.textIfReady()?.let(viewModel::flushDraft) },
+                onNavigate = onNavigate,
+            )
+        },
+    ) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
+                .imePadding(),
+        ) {
+            TopBar(
+                title = streamTitle(filter, state.labelNames),
+                count = state.count,
+                onMenu = { scope.launch { drawer.open() } },
+                onSearch = { onNavigate(Search) },
+            )
+            StreamList(state, { onNavigate(Detail(it)) }, Modifier.weight(1f))
+            SnackbarHost(snackbar)
+            Composer(
+                composer = composer,
+                canSend = state.canSend,
+                suggestions = remember(state.suggestions, state.usage) { Suggestions(state.suggestions, state.usage) },
+                onSend = {
+                    if (viewModel.send(composer.text.text.toString())) {
+                        composer.text.clearText()
+                        composer.focusRequester.requestFocus()
+                    }
+                },
+            )
+        }
+    }
+}
+
+private fun streamTitle(
+    filter: NoteFilter,
+    names: LabelNames,
+) = when (filter) {
+    NoteFilter.Pinned -> "ピン留め"
+    NoteFilter.Unlabeled -> "ラベルなし"
+    is NoteFilter.ByLabel -> names.byId[filter.labelId].orEmpty()
+    else -> "Futaba"
+}
+
+@Composable
+private fun StreamDrawer(
+    content: DrawerContent,
+    drawer: DrawerState,
+    flushDraft: () -> Unit,
+    onNavigate: (NavKey) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val close: () -> Unit = { scope.launch { drawer.snapTo(DrawerValue.Closed) } }
+    FutabaDrawer(
+        content = content,
+        onSelect = { next ->
+            flushDraft()
+            if (next == content.current) scope.launch { drawer.close() } else onNavigate(Stream(next))
+        },
+        onManageLabels = {
+            close()
+            onNavigate(LabelEdit)
+        },
+        onSettings = {
+            close()
+            onNavigate(Settings)
+        },
+    )
+}
+
+/** Back closes an open drawer first; a deleted active label falls back to the All view. */
+@Composable
+private fun DrawerBackAndFallback(
+    drawer: DrawerState,
+    filterMissing: Boolean,
+    onFallback: () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val fallback by rememberUpdatedState(onFallback)
+    BackHandler(enabled = drawer.isOpen) { scope.launch { drawer.close() } }
+    LaunchedEffect(filterMissing) { if (filterMissing) fallback() }
+}
+
+@Composable
+private fun ComposerEffects(
+    composer: ComposerState,
+    draftNow: () -> String,
+    onDraftChange: (String) -> Unit,
+    flushDraft: (String) -> Unit,
+    focusRequested: Flow<Unit>,
+) {
     val keyboard = LocalSoftwareKeyboardController.current
     val windowInfo = LocalWindowInfo.current
+    val currentDraft by rememberUpdatedState(draftNow)
+    val changeDraft by rememberUpdatedState(onDraftChange)
+    val flush by rememberUpdatedState(flushDraft)
 
-    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { composer.textIfReady()?.let(viewModel::flushDraft) }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { composer.textIfReady()?.let(flush) }
     LaunchedEffect(composer) {
         if (!composer.enabled) return@LaunchedEffect
         snapshotFlow { composer.text.text.toString() }.collect { text ->
             // The initial field value and the programmatic clear already match the ViewModel.
-            if (text != viewModel.draftNow()) viewModel.onDraftChange(text)
+            if (text != currentDraft()) changeDraft(text)
         }
     }
     LaunchedEffect(composer) {
-        if (composer.enabled && viewModel.wantsStartupFocus(focusComposer)) {
+        if (!composer.enabled) return@LaunchedEffect
+        focusRequested.collect {
             // The IME ignores show requests until the window has focus (cold start).
             snapshotFlow { windowInfo.isWindowFocused }.first { it }
             composer.focusRequester.requestFocus()
             keyboard?.show()
         }
     }
-
-    val snackbar = remember { SnackbarHostState() }
-    val undo by viewModel.pendingUndo.collectAsStateWithLifecycle()
-    UndoSnackbarEffect(undo, snackbar, viewModel::now, viewModel::restore, viewModel::clearUndo)
-
-    Column(
-        modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .imePadding(),
-    ) {
-        TopBar(count = state.count, onSearch = { onNavigate(Search) })
-        StreamList(state, { onNavigate(Detail(it)) }, Modifier.weight(1f))
-        SnackbarHost(snackbar)
-        Composer(
-            composer = composer,
-            canSend = state.canSend,
-            suggestions = remember(state.suggestions, state.usage) { Suggestions(state.suggestions, state.usage) },
-            onSend = {
-                if (viewModel.send(composer.text.text.toString())) {
-                    composer.text.clearText()
-                    composer.focusRequester.requestFocus()
-                }
-            },
-        )
-    }
 }
 
 @Composable
 private fun TopBar(
+    title: String,
     count: Int,
+    onMenu: () -> Unit,
     onSearch: () -> Unit,
 ) {
     Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        // Menu opens the drawer in Task 10.
-        IconButton(onClick = {}) { Icon(painterResource(R.drawable.ic_menu), contentDescription = "メニュー") }
-        Text("Futaba", style = MaterialTheme.typography.titleLarge)
+        IconButton(onClick = onMenu) { Icon(painterResource(R.drawable.ic_menu), contentDescription = "メニュー") }
+        Text(title, style = MaterialTheme.typography.titleLarge)
         Text(
             "$count",
             modifier = Modifier.padding(start = 8.dp).weight(1f),

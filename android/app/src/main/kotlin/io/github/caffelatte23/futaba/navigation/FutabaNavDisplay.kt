@@ -13,10 +13,7 @@ import io.github.caffelatte23.futaba.feature.search.SearchScreen
 import io.github.caffelatte23.futaba.feature.stream.StreamScreen
 
 @Composable
-fun FutabaNavDisplay(
-    modifier: Modifier = Modifier,
-    focusComposer: Boolean = false,
-) {
+fun FutabaNavDisplay(modifier: Modifier = Modifier) {
     val backStack = rememberNavBackStack(Stream())
     NavDisplay(
         backStack = backStack,
@@ -32,8 +29,15 @@ fun FutabaNavDisplay(
                 entry<Stream> { key ->
                     StreamScreen(
                         filter = key.filter,
-                        focusComposer = focusComposer,
-                        onNavigate = backStack::add,
+                        // A filter switch replaces the top Stream instead of stacking another one.
+                        onNavigate = { target ->
+                            when {
+                                target !is Stream -> backStack.add(target)
+
+                                // Only the visible (top) Stream may replace itself; an outgoing one must not.
+                                backStack.lastOrNull() == key -> backStack[backStack.lastIndex] = target
+                            }
+                        },
                     )
                 }
                 // Placeholders: Tasks 8-13 replace these with real screens.
