@@ -18,6 +18,9 @@ import io.github.caffelatte23.futaba.core.domain.suggestLabels
 import io.github.caffelatte23.futaba.core.model.Label
 import io.github.caffelatte23.futaba.core.model.Note
 import io.github.caffelatte23.futaba.core.model.NoteFilter
+import io.github.caffelatte23.futaba.feature.labels.LabelCheck
+import io.github.caffelatte23.futaba.feature.labels.LabelSheetState
+import io.github.caffelatte23.futaba.feature.labels.labelChecks
 import io.github.caffelatte23.futaba.testing.FakeNoteRepository
 import io.github.caffelatte23.futaba.testing.MainDispatcherRule
 import kotlinx.coroutines.CompletableDeferred
@@ -73,7 +76,8 @@ class StreamViewModelTest {
     private fun vm(
         filter: NoteFilter = NoteFilter.All,
         appScope: CoroutineScope = CoroutineScope(main.dispatcher),
-    ) = StreamViewModel(repo, prefs, drafts, uid, appScope, UndoBus(), focus, filter)
+        undo: UndoBus = UndoBus(),
+    ) = StreamViewModel(repo, prefs, drafts, uid, appScope, undo, focus, filter)
 
     @Test
     fun switchingFilterKeepsDraft() =
@@ -518,6 +522,106 @@ class StreamViewModelTest {
             assertThat(notReady.textIfReady()).isNull()
             assertThat(prefs.draft.first()).isEqualTo("saved")
             assertThat(ComposerState("x", enabled = true).textIfReady()).isEqualTo("x")
+        }
+
+    @Test
+    fun applyLabelsToSelection() =
+        runTest {
+            val a = repo.add("a")
+            val b = repo.add("b")
+            val l1 = repo.createLabel("l1")
+            val vm = vm()
+            vm.state.test {
+                vm.toggleSelect(a)
+                vm.toggleSelect(b)
+                assertThat(expectMostRecentItem().selection).containsExactly(a, b)
+                vm.applyLabels(listOf(l1), emptyList())
+                val s = expectMostRecentItem()
+                assertThat(s.selection).isEmpty()
+                assertThat(s.sections.flatMap { it.notes }.map { it.labelIds }).containsExactly(listOf(l1), listOf(l1))
+            }
+        }
+
+    @Test
+    fun labelSheetTriState() {
+        val a = Note("a", "a", listOf("x", "y"), false, java.time.Instant.EPOCH, java.time.Instant.EPOCH, null)
+        val b = a.copy(id = "b", labelIds = listOf("x"))
+        val labels = listOf("x", "y", "z").mapIndexed { i, id -> Label(id, id, "", i) }
+        val checks = labelChecks(listOf(a, b), labels)
+        assertThat(checks).containsExactly("x", LabelCheck.All, "y", LabelCheck.Some, "z", LabelCheck.None)
+        val sheet = LabelSheetState(checks)
+        sheet.toggle("y") // Some -> All
+        sheet.toggle("x") // All -> None
+        assertThat(sheet.check("y")).isEqualTo(LabelCheck.All)
+        assertThat(sheet.changes()).isEqualTo(listOf("y") to listOf("x"))
+    }
+
+    @Test
+    fun pinToggleUnpinsWhenAllPinned() =
+        runTest {
+            val a = repo.add("a")
+            val b = repo.add("b")
+            repo.setPinned(a, true)
+            val vm = vm()
+            vm.state.test {
+                vm.toggleSelect(a)
+                vm.toggleSelect(b)
+                expectMostRecentItem()
+                vm.pinSelected() // mixed -> pin all
+                assertThat(expectMostRecentItem().pinned.map { it.id }).containsExactly(a, b)
+                vm.toggleSelect(a)
+                vm.toggleSelect(b)
+                expectMostRecentItem()
+                vm.pinSelected() // all pinned -> unpin
+                assertThat(expectMostRecentItem().pinned).isEmpty()
+            }
+        }
+
+    @Test
+    fun deleteSelectedPostsUndo() =
+        runTest {
+            val a = repo.add("a")
+            val b = repo.add("b")
+            val undo = UndoBus()
+            val vm = vm(undo = undo)
+            vm.state.test {
+                vm.toggleSelect(a)
+                vm.toggleSelect(b)
+                expectMostRecentItem()
+                vm.deleteSelected()
+                val s = expectMostRecentItem()
+                assertThat(s.selection).isEmpty()
+                assertThat(s.count).isEqualTo(0)
+                assertThat(undo.pending.value!!.ids).containsExactly(a, b)
+            }
+        }
+
+    @Test
+    fun createFromSheetAttachesNewLabel() =
+        runTest {
+            val a = repo.add("a")
+            val vm = vm()
+            vm.state.test {
+                vm.toggleSelect(a)
+                expectMostRecentItem()
+                val sheet = LabelSheetState(emptyMap())
+                sheet.attach(vm.createLabel("Idea"))
+                val (add, remove) = sheet.changes()
+                vm.applyLabels(add, remove)
+                val id =
+                    repo.labels
+                        .first()
+                        .single { it.name == "Idea" }
+                        .id
+                assertThat(
+                    expectMostRecentItem()
+                        .sections
+                        .single()
+                        .notes
+                        .single()
+                        .labelIds,
+                ).containsExactly(id)
+            }
         }
 }
 

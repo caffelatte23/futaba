@@ -74,6 +74,11 @@ data class StreamUiState(
     val filterMissing: Boolean = false,
     /** Label view only: labels loaded (signed in) and the label exists, so notes may be sent here. */
     val labelViewReady: Boolean = false,
+    /** Ids of the selected notes (selection mode while non-empty); only notes still shown. */
+    val selection: Set<String> = emptySet(),
+    val selectedNotes: List<Note> = emptyList(),
+    /** All labels in `order`, for the label sheet. */
+    val labels: List<Label> = emptyList(),
 )
 
 private const val DRAFT_SAVE_DELAY_MS = 300L
@@ -135,7 +140,9 @@ class StreamViewModel
                 }
             }
 
-        val state: StateFlow<StreamUiState> =
+        private val selected = MutableStateFlow<Set<String>>(emptySet())
+
+        private val baseState: Flow<StreamUiState> =
             combine(notesOrEmpty, labelsOrEmpty, draft, uid, loaded) { all, (labels, labelsLoaded), text, id, ready ->
                 val shown = filterNotes(all, filter)
                 val usage = labelUsage(all)
@@ -156,8 +163,54 @@ class StreamViewModel
                     drawerLabels = drawerLabels(labels, usage),
                     filterMissing = labelsLoaded && filter is NoteFilter.ByLabel && !labelViewReady,
                     labelViewReady = labelViewReady,
+                    labels = labels.sortedBy(Label::order),
                 )
+            }
+
+        // Selection is cut down to the notes still shown, so deleted or moved notes drop out by themselves.
+        val state: StateFlow<StreamUiState> =
+            combine(baseState, selected) { base, picked ->
+                val notes = (base.pinned + base.sections.flatMap(DaySection::notes)).filter { it.id in picked }
+                base.copy(selection = notes.mapTo(LinkedHashSet(), Note::id), selectedNotes = notes)
             }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), StreamUiState())
+
+        fun toggleSelect(id: String) {
+            val now = state.value.selection
+            selected.value = if (id in now) now - id else now + id
+        }
+
+        fun clearSelection() {
+            selected.value = emptySet()
+        }
+
+        /** One `setLabels` for the whole selection, then leaves selection mode. */
+        fun applyLabels(
+            add: List<String>,
+            remove: List<String>,
+        ) {
+            val ids = state.value.selection.toList()
+            if (ids.isNotEmpty() && (add.isNotEmpty() || remove.isNotEmpty())) repo.setLabels(ids, add, remove)
+            clearSelection()
+        }
+
+        suspend fun createLabel(name: String): String = repo.createLabel(name)
+
+        fun deleteSelected() {
+            val ids = state.value.selection.toList()
+            if (ids.isNotEmpty()) {
+                repo.delete(ids)
+                undoBus.postDeleted(ids)
+            }
+            clearSelection()
+        }
+
+        /** Unpins when every selected note is pinned, otherwise pins them all. */
+        fun pinSelected() {
+            val notes = state.value.selectedNotes
+            val pin = !notes.all(Note::pinned)
+            notes.forEach { repo.setPinned(it.id, pin) }
+            clearSelection()
+        }
 
         /** Emits when a newer focus request arrives (and was not already served by another screen). */
         val focusRequested: Flow<Unit> =

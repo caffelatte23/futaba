@@ -8,6 +8,7 @@ import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.github.caffelatte23.futaba.core.data.NoteRepository
 import io.github.caffelatte23.futaba.core.data.UndoBus
+import io.github.caffelatte23.futaba.core.model.Label
 import io.github.caffelatte23.futaba.core.model.Note
 import io.github.caffelatte23.futaba.feature.stream.LabelNames
 import kotlinx.coroutines.Job
@@ -35,6 +36,7 @@ sealed interface DetailEvent {
 data class DetailUiState(
     val note: Note? = null,
     val labelNames: LabelNames = LabelNames(emptyMap()),
+    val labels: List<Label> = emptyList(),
     /** False until the note has been read once; the editor stays disabled and its callbacks are ignored. */
     val ready: Boolean = false,
 )
@@ -63,7 +65,7 @@ class DetailViewModel
 
         val state: StateFlow<DetailUiState> =
             combine(noteFlow, repo.labels, ready) { note, labels, isReady ->
-                DetailUiState(note, LabelNames(labels.associate { it.id to it.name }), isReady)
+                DetailUiState(note, LabelNames(labels.associate { it.id to it.name }), labels, isReady)
             }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), DetailUiState())
 
         /** The editor's authoritative text; may be blank. Only meaningful once ready. */
@@ -130,6 +132,13 @@ class DetailViewModel
         fun togglePin() {
             state.value.note?.let { repo.setPinned(noteId, !it.pinned) }
         }
+
+        fun applyLabels(
+            add: List<String>,
+            remove: List<String>,
+        ) = repo.setLabels(listOf(noteId), add, remove)
+
+        suspend fun createLabel(name: String): String = repo.createLabel(name)
 
         private fun write() {
             pending = false
