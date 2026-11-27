@@ -24,7 +24,10 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.emptyFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Rule
 import org.junit.Test
@@ -37,26 +40,33 @@ class StreamViewModelTest {
     private val uid = MutableStateFlow<String?>("u1")
 
     // In-memory DataStore: the file-backed one races on Windows renames under test dispatchers.
-    private fun prefsWith(gate: CompletableDeferred<Unit>) =
-        UserPreferencesRepository(
-            object : DataStore<Preferences> {
-                private val state = MutableStateFlow(emptyPreferences())
-                override val data: Flow<Preferences> =
-                    flow {
-                        gate.await()
-                        emitAll(state)
-                    }
+    private fun prefsWith(
+        gate: CompletableDeferred<Unit>,
+        onWrite: () -> Unit = {},
+    ) = UserPreferencesRepository(
+        object : DataStore<Preferences> {
+            private val state = MutableStateFlow(emptyPreferences())
+            override val data: Flow<Preferences> =
+                flow {
+                    gate.await()
+                    emitAll(state)
+                }
 
-                override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences =
-                    transform(state.value).also { state.value = it }
-            },
-        )
+            override suspend fun updateData(transform: suspend (Preferences) -> Preferences): Preferences =
+                transform(state.value).also {
+                    onWrite()
+                    state.value = it
+                }
+        },
+    )
 
     private val prefs = prefsWith(CompletableDeferred(Unit))
     private val drafts = DraftStore(prefs)
 
-    private fun vm(filter: NoteFilter = NoteFilter.All) =
-        StreamViewModel(repo, prefs, drafts, uid, CoroutineScope(main.dispatcher), filter)
+    private fun vm(
+        filter: NoteFilter = NoteFilter.All,
+        appScope: CoroutineScope = CoroutineScope(main.dispatcher),
+    ) = StreamViewModel(repo, prefs, drafts, uid, appScope, filter)
 
     @Test
     fun sendIgnoresBlankText() =
@@ -145,6 +155,41 @@ class StreamViewModelTest {
         runTest {
             prefs.setDraft("saved")
             assertThat(vm().draftNow()).isEqualTo("saved")
+        }
+
+    @Test
+    fun replacementViewModelHydratesFromPendingIntentNotDisk() =
+        runTest {
+            prefs.setDraft("saved")
+            val appScope = CoroutineScope(StandardTestDispatcher(testScheduler))
+            val old = vm(appScope = appScope)
+            old.flushDraft("pending")
+            assertThat(prefs.draft.first()).isEqualTo("saved")
+            val replacement = vm(appScope = appScope)
+            assertThat(replacement.draftNow()).isEqualTo("pending")
+            runCurrent()
+            assertThat(prefs.draft.first()).isEqualTo("pending")
+
+            assertThat(replacement.send("pending")).isTrue()
+            assertThat(prefs.draft.first()).isEqualTo("pending")
+            assertThat(vm().draftNow()).isEmpty()
+            advanceTimeBy(301)
+            assertThat(prefs.draft.first()).isEmpty()
+        }
+
+    @Test
+    fun hydrationNeverWritesOrMintsSeq() =
+        runTest {
+            var writes = 0
+            val prefs = prefsWith(CompletableDeferred(Unit)) { writes++ }
+            prefs.setDraft("saved")
+            val drafts = DraftStore(prefs)
+            val vm = StreamViewModel(repo, prefs, drafts, uid, CoroutineScope(main.dispatcher), NoteFilter.All)
+            assertThat(vm.draftNow()).isEqualTo("saved")
+            advanceTimeBy(301)
+
+            val nextSeq = drafts.nextSeq()
+            assertThat(listOf(writes.toLong(), nextSeq)).containsExactly(1L, 1L)
         }
 
     @Test

@@ -59,7 +59,10 @@ fun StreamScreen(
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { composer.textIfReady()?.let(viewModel::flushDraft) }
     LaunchedEffect(composer) {
         if (!composer.enabled) return@LaunchedEffect
-        snapshotFlow { composer.text.text.toString() }.collect(viewModel::onDraftChange)
+        snapshotFlow { composer.text.text.toString() }.collect { text ->
+            // The initial field value and the programmatic clear already match the ViewModel.
+            if (text != viewModel.draftNow()) viewModel.onDraftChange(text)
+        }
     }
     LaunchedEffect(composer) {
         if (composer.enabled && viewModel.wantsStartupFocus(focusComposer)) {

@@ -7,6 +7,7 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
+import io.github.caffelatte23.futaba.core.data.DraftIntent
 import io.github.caffelatte23.futaba.core.data.DraftStore
 import io.github.caffelatte23.futaba.core.data.NoteRepository
 import io.github.caffelatte23.futaba.core.data.UserPreferencesRepository
@@ -83,18 +84,21 @@ class StreamViewModel
         }
 
         private val draft = MutableStateFlow("")
+        private val pendingDraft = MutableStateFlow<DraftIntent?>(null)
         private val loaded = MutableStateFlow(false)
         private var startupFocusTaken = false
 
-        // The saved draft is read once, before input is accepted; only then do edits get persisted.
         init {
             viewModelScope.launch {
-                draft.value = prefs.draft.first()
+                draft.value = drafts.latestIntent.value?.text ?: prefs.draft.first().let { saved ->
+                    // A different ViewModel can register an intent while the disk read is suspended.
+                    drafts.latestIntent.value?.text ?: saved
+                }
                 loaded.value = true
-                draft.collectLatest {
-                    val seq = drafts.nextSeq()
+                pendingDraft.collectLatest { intent ->
+                    if (intent == null) return@collectLatest
                     delay(DRAFT_SAVE_DELAY_MS)
-                    drafts.write(it, seq)
+                    drafts.write(intent.text, intent.seq)
                 }
             }
         }
@@ -135,28 +139,38 @@ class StreamViewModel
         fun takeStartupFocus(): Boolean = !startupFocusTaken.also { startupFocusTaken = true }
 
         fun onDraftChange(text: String) {
-            if (loaded.value) draft.value = text
+            if (loaded.value) recordDraft(text)
         }
 
         /**
          * Adopts [fieldText] (the field's content, which may be newer than what [onDraftChange] has delivered)
          * and persists it in a scope that outlives the screen.
          */
-        fun flushDraft(fieldText: String = draft.value) {
+        fun flushDraft(fieldText: String) {
             if (!loaded.value) return
-            draft.value = fieldText
-            val seq = drafts.nextSeq() // taken now: a later intent always outranks this write, wherever it runs
-            appScope.launch { drafts.write(fieldText, seq) }
+            persistInAppScope(recordDraft(fieldText))
         }
 
-        override fun onCleared() = flushDraft()
+        private fun recordDraft(text: String): DraftIntent {
+            val intent = drafts.registerIntent(text)
+            draft.value = text
+            pendingDraft.value = intent
+            return intent
+        }
+
+        private fun persistInAppScope(intent: DraftIntent) {
+            appScope.launch { drafts.write(intent.text, intent.seq) }
+        }
+
+        override fun onCleared() {
+            pendingDraft.value?.let(::persistInAppScope)
+        }
 
         /** Sends [text] (the field content); returns whether it was accepted. The draft is cleared only then. */
         fun send(text: String): Boolean {
             val body = text.trim()
             if (body.isEmpty() || uid.value == null || !loaded.value) return false
             repo.add(body, (filter as? NoteFilter.ByLabel)?.let { listOf(it.labelId) }.orEmpty())
-            draft.value = ""
             flushDraft("")
             return true
         }
