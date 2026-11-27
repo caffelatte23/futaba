@@ -5,6 +5,7 @@ import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
@@ -50,7 +51,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.caffelatte23.futaba.R
-import io.github.caffelatte23.futaba.core.designsystem.FutabaMono
+import io.github.caffelatte23.futaba.core.designsystem.timestampStyle
 import io.github.caffelatte23.futaba.core.model.Note
 import io.github.caffelatte23.futaba.feature.stream.LabelChip
 import io.github.caffelatte23.futaba.feature.stream.LabelNames
@@ -67,14 +68,14 @@ fun DetailScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val note = state.note
-    // The field starts from the note once it has loaded; later repository updates are our own writes.
-    val field = remember(note != null) { TextFieldState(note?.text.orEmpty()) }
+    // The ViewModel owns the text; the field is (re)created from it once the note has been read.
+    val field = remember(state.ready) { TextFieldState(viewModel.textNow()) }
     val leave = {
         if (!viewModel.leave(field.text.toString())) onBack()
     }
 
     BackHandler(onBack = leave)
-    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { if (note != null) viewModel.flush(field.text.toString()) }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.flush(field.text.toString()) }
     val currentOnBack by rememberUpdatedState(onBack)
     LaunchedEffect(viewModel) { viewModel.events.collect { currentOnBack() } }
     LaunchedEffect(field) {
@@ -93,9 +94,9 @@ fun DetailScreen(
             fieldText = { field.text.toString() },
             onBack = leave,
             onTogglePin = viewModel::togglePin,
-            onDelete = viewModel::delete,
+            onDelete = { viewModel.delete(field.text.toString()) },
         )
-        if (note != null) {
+        if (note != null && state.ready) {
             DetailBody(note, field, state.labelNames, Modifier.weight(1f))
         }
     }
@@ -114,7 +115,7 @@ private fun DetailTopBar(
         Text(
             note?.let { detailHeader(it.createdAt, it.updatedAt) }.orEmpty(),
             modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.labelMedium.copy(fontFamily = FutabaMono),
+            style = timestampStyle(),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         IconButton(onClick = onTogglePin, enabled = note != null) {
@@ -183,15 +184,19 @@ private fun DetailBody(
     labelNames: LabelNames,
     modifier: Modifier = Modifier,
 ) {
-    Column(modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp)) {
-        BasicTextField(
-            state = field,
-            modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp),
-            textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
-            cursorBrush = SolidColor(MaterialTheme.colorScheme.onSurface),
-        )
+    Column(modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
+        // The field fills the body so tapping anywhere below the text focuses it; long text scrolls.
+        BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+            val fill = maxHeight
+            BasicTextField(
+                state = field,
+                modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).heightIn(min = fill),
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = MaterialTheme.colorScheme.onSurface),
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.onSurface),
+            )
+        }
         FlowRow(
-            modifier = Modifier.padding(top = 20.dp),
+            modifier = Modifier.padding(top = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {

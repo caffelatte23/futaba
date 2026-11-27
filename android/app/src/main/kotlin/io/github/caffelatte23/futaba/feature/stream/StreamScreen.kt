@@ -46,8 +46,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 import java.time.LocalDate
 
-private const val UNDO_TIMEOUT_MS = 5_000L
-
 @Composable
 fun StreamScreen(
     filter: NoteFilter,
@@ -81,15 +79,20 @@ fun StreamScreen(
     }
 
     val snackbar = remember { SnackbarHostState() }
-    LaunchedEffect(viewModel) {
-        viewModel.deletions.collect { ids ->
-            // Shown one at a time; the timeout dismisses it after 5s (M3 durations are only 4s/10s).
-            val result =
-                withTimeoutOrNull(UNDO_TIMEOUT_MS) {
+    val undo by viewModel.pendingUndo.collectAsStateWithLifecycle()
+    LaunchedEffect(undo) {
+        val offer = undo ?: return@LaunchedEffect
+        // Shown for the time left on the offer (M3 durations are only 4s/10s), then dropped.
+        val left = offer.expiresAt - viewModel.now()
+        val result =
+            if (left > 0) {
+                withTimeoutOrNull(left) {
                     snackbar.showSnackbar("削除しました", "元に戻す", duration = SnackbarDuration.Indefinite)
                 }
-            if (result == SnackbarResult.ActionPerformed) viewModel.restore(ids)
-        }
+            } else {
+                null
+            }
+        if (result == SnackbarResult.ActionPerformed) viewModel.restore(offer) else viewModel.clearUndo(offer)
     }
 
     Column(

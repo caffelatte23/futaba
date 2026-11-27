@@ -14,6 +14,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
@@ -34,11 +35,14 @@ sealed interface DetailEvent {
 data class DetailUiState(
     val note: Note? = null,
     val labelNames: LabelNames = LabelNames(emptyMap()),
+    /** False until the note has been read once; the editor stays disabled and its callbacks are ignored. */
+    val ready: Boolean = false,
 )
 
 private const val AUTOSAVE_DELAY_MS = 500L
 private const val STOP_TIMEOUT_MS = 5_000L
 
+/** Owns the editor text (like the stream's composer): hydrated once, it outlives screen recreation. */
 @HiltViewModel(assistedFactory = DetailViewModel.Factory::class)
 class DetailViewModel
     @AssistedInject
@@ -55,57 +59,69 @@ class DetailViewModel
         private val noteFlow = repo.notes.map { all -> all.firstOrNull { it.id == noteId } }
         private val eventChannel = Channel<DetailEvent>(Channel.BUFFERED)
         val events: Flow<DetailEvent> = eventChannel.receiveAsFlow()
+        private val ready = MutableStateFlow(false)
 
         val state: StateFlow<DetailUiState> =
-            combine(noteFlow, repo.labels) { note, labels ->
-                DetailUiState(note, LabelNames(labels.associate { it.id to it.name }))
+            combine(noteFlow, repo.labels, ready) { note, labels, isReady ->
+                DetailUiState(note, LabelNames(labels.associate { it.id to it.name }), isReady)
             }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), DetailUiState())
 
-        /** Text last handed to the repository (or the note's text at open); null until the note has loaded. */
-        private var saved: String? = null
-        private var pending: String? = null
+        /** The editor's authoritative text; may be blank. Only meaningful once ready. */
+        private var text = ""
+
+        /** Last text handed to the repository (or the note's text at open). */
+        private var saved = ""
+        private var pending = false
         private var autosave: Job? = null
         private var finished = false
 
         init {
-            viewModelScope.launch { saved = noteFlow.filterNotNull().first().text }
+            viewModelScope.launch {
+                // Editor text and baseline come from the same emission.
+                val first = noteFlow.filterNotNull().first()
+                text = first.text
+                saved = first.text
+                ready.value = true
+            }
         }
 
-        fun onTextChange(text: String) {
-            if (finished) return
-            pending = text
+        /** The text a (re)created field starts from. */
+        fun textNow(): String = text
+
+        fun onTextChange(newText: String) {
+            if (!ready.value || finished) return
+            text = newText
+            pending = true
             autosave?.cancel()
             autosave =
                 viewModelScope.launch {
                     delay(AUTOSAVE_DELAY_MS)
-                    pending = null
-                    write(text)
+                    write()
                 }
         }
 
-        /** Writes [text] now (screen stopped); an empty text stays in the field but is never saved. */
-        fun flush(text: String) {
-            if (finished) return
+        /** Adopts [fieldText] and writes it now (screen stopped). Blank text is kept but never saved. */
+        fun flush(fieldText: String) {
+            if (!ready.value || finished) return
+            text = fieldText
             autosave?.cancel()
-            pending = null
-            write(text)
+            write()
         }
 
-        /** Leaving the screen: saves [text], or deletes the note when it was cleared. True when deleted. */
-        fun leave(text: String): Boolean {
-            if (text.isBlank()) {
-                delete()
-                return true
-            }
-            flush(text)
-            return false
+        /** Leaving the screen: saves [fieldText], or soft-deletes the note when it was cleared. True when deleted. */
+        fun leave(fieldText: String): Boolean {
+            if (!ready.value || finished) return false
+            val cleared = fieldText.isBlank()
+            if (cleared) delete(fieldText) else flush(fieldText)
+            return cleared
         }
 
-        fun delete() {
-            if (finished) return
+        /** Saves a non-blank [fieldText] first so undo restores the latest body, then moves the note to the trash. */
+        fun delete(fieldText: String) {
+            if (!ready.value || finished) return
+            flush(fieldText)
             finished = true
             autosave?.cancel()
-            pending = null
             repo.delete(listOf(noteId))
             undoBus.postDeleted(listOf(noteId))
             eventChannel.trySend(DetailEvent.Deleted(noteId))
@@ -115,14 +131,15 @@ class DetailViewModel
             state.value.note?.let { repo.setPinned(noteId, !it.pinned) }
         }
 
-        private fun write(text: String) {
-            if (text.isBlank() || saved == null || text == saved) return
+        private fun write() {
+            pending = false
+            if (text.isBlank() || text == saved) return
             saved = text
             repo.updateText(noteId, text)
         }
 
         // Back gestures bypass leave(): persist the last edit that the debounce has not written yet.
         override fun onCleared() {
-            pending?.takeUnless { finished }?.let(::write)
+            if (pending && !finished) write()
         }
     }

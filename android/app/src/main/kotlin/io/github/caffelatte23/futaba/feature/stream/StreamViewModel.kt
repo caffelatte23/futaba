@@ -10,6 +10,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import io.github.caffelatte23.futaba.core.data.DraftIntent
 import io.github.caffelatte23.futaba.core.data.DraftStore
 import io.github.caffelatte23.futaba.core.data.NoteRepository
+import io.github.caffelatte23.futaba.core.data.PendingUndo
 import io.github.caffelatte23.futaba.core.data.UndoBus
 import io.github.caffelatte23.futaba.core.data.UserPreferencesRepository
 import io.github.caffelatte23.futaba.core.domain.filterNotes
@@ -68,7 +69,7 @@ private const val STOP_TIMEOUT_MS = 5_000L
 /** `#` followed by a (possibly empty) label prefix at the very end of the draft. */
 private val trailingHashtag = Regex("""(?<![\p{L}\p{N}/&])[#＃]([\p{L}\p{N}_-]*)$""")
 
-@Suppress("LongParameterList") // constructor injection of independent collaborators
+@Suppress("LongParameterList", "TooManyFunctions") // injected collaborators; one screen's state holder
 @HiltViewModel(assistedFactory = StreamViewModel.Factory::class)
 class StreamViewModel
     @AssistedInject
@@ -135,10 +136,17 @@ class StreamViewModel
         suspend fun wantsStartupFocus(forced: Boolean): Boolean =
             takeStartupFocus() && (forced || prefs.openKeyboardOnLaunch.first())
 
-        /** Deleted note ids (from Detail or bulk delete) to offer 「元に戻す」 for. */
-        val deletions = undoBus.deletions
+        /** The pending 「元に戻す」 offer (from Detail or bulk delete); survives screen recreation. */
+        val pendingUndo = undoBus.pending
 
-        fun restore(ids: List<String>) = repo.restore(ids)
+        fun now() = undoBus.now()
+
+        fun clearUndo(undo: PendingUndo) = undoBus.clear(undo)
+
+        fun restore(undo: PendingUndo) {
+            repo.restore(undo.ids)
+            undoBus.clear(undo)
+        }
 
         /** Current draft, for a recreated text field to start from. */
         fun draftNow(): String = draft.value
