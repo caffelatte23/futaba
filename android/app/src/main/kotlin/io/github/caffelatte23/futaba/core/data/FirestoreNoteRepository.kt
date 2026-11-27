@@ -452,29 +452,46 @@ class FirestoreNoteRepository
                 }.await()
         }
 
-        override suspend fun createLabel(name: String): String {
+        override suspend fun createLabel(
+            name: String,
+            reuseExisting: Boolean,
+        ): String {
             val uid = checkNotNull(auth.uid.value) { "createLabel failed: not signed in" }
-            val id =
+            val result =
                 enqueue("createLabel", uid) { user ->
                     val labels = user.cachedLabels()
                     val existing = labels.firstOrNull { it.name.equals(name, ignoreCase = true) }?.id
-                    existing
-                        ?: user
-                            .collection("labels")
-                            .document()
-                            .also { ref ->
-                                val order = (labels.maxOfOrNull(Label::order) ?: -1) + 1
-                                check(commitBatch(user, listOf(setOp(ref, labelFields(name, order))))) { "uid changed" }
-                            }.id
+                    if (existing != null) {
+                        return@enqueue if (reuseExisting) {
+                            Result.success(existing)
+                        } else {
+                            Result.failure(DuplicateLabelNameException())
+                        }
+                    }
+                    val ref = user.collection("labels").document()
+                    val order = (labels.maxOfOrNull(Label::order) ?: -1) + 1
+                    check(commitBatch(user, listOf(setOp(ref, labelFields(name, order))))) { "uid changed" }
+                    Result.success(ref.id)
                 }.await()
             check(auth.uid.value == uid) { "createLabel failed: uid changed" }
-            return checkNotNull(id) { "createLabel failed: write dropped" }
+            return checkNotNull(result) { "createLabel failed: write dropped" }.getOrThrow()
         }
 
-        override fun renameLabel(
+        override suspend fun renameLabel(
             id: String,
             name: String,
-        ) = updateLabels("renameLabel", mapOf(id to mapOf("name" to name)))
+        ) {
+            val unique =
+                enqueue("renameLabel") { user ->
+                    val labels = user.cachedLabels()
+                    if (labels.any { it.id != id && it.name.equals(name, ignoreCase = true) }) return@enqueue false
+                    check(labels.any { it.id == id }) { "label no longer exists" }
+                    val ref = user.collection("labels").document(id)
+                    check(commitBatch(user, listOf(updateOp(ref, mapOf("name" to name))))) { "uid changed" }
+                    true
+                }.await()
+            if (!checkNotNull(unique) { "renameLabel failed: write dropped" }) throw DuplicateLabelNameException()
+        }
 
         override fun setLabelColor(
             id: String,
@@ -500,22 +517,63 @@ class FirestoreNoteRepository
         }
 
         override fun deleteLabel(id: String) {
-            enqueue("deleteLabel") { user ->
-                val affected =
-                    user
-                        .collection(
-                            "notes",
-                        ).whereArrayContains("labelIds", id)
-                        .get(Source.CACHE)
-                        .await()
-                        .documents
-                // The label delete is the first op, so it shares the first batch with the first detachments.
-                val ops =
-                    listOf(deleteOp(user.collection("labels").document(id))) +
-                        affected.map { n -> updateOp(n.reference, mapOf("labelIds" to FieldValue.arrayRemove(id))) }
-                for (chunk in ops.chunked(BATCH_LIMIT)) {
-                    if (!commitBatch(user, chunk)) break
-                }
+            enqueue("deleteLabel") { user -> deleteLabelInCache(user, id) }
+        }
+
+        override suspend fun deleteLabelForUndo(id: String): DeletedLabel =
+            checkNotNull(
+                enqueue("deleteLabelForUndo") { user ->
+                    val label = user.cachedLabels().first { it.id == id }
+                    DeletedLabel(label, deleteLabelInCache(user, id), user.id)
+                }.await(),
+            ) { "deleteLabel failed: write dropped" }
+
+        @Suppress("RedundantSuspendModifier") // Firestore's Task.await() suspends.
+        private suspend fun deleteLabelInCache(
+            user: DocumentReference,
+            id: String,
+        ): List<String> {
+            val affected =
+                user
+                    .collection("notes")
+                    .whereArrayContains("labelIds", id)
+                    .get(Source.CACHE)
+                    .await()
+                    .documents
+            val ops =
+                listOf(deleteOp(user.collection("labels").document(id))) +
+                    affected.map { updateOp(it.reference, mapOf("labelIds" to FieldValue.arrayRemove(id))) }
+            commitLabelAndAttachments(user, ops)
+            return affected.map(DocumentSnapshot::getId)
+        }
+
+        override suspend fun restoreLabel(deleted: DeletedLabel) {
+            checkNotNull(
+                enqueue("restoreLabel", deleted.uid) { user ->
+                    val label = deleted.label
+                    val notes = user.collection("notes")
+                    val ids = deleted.noteIds.toHashSet()
+                    val attached = user.cachedNotes().filter { it.id in ids }
+                    val fields = mapOf("name" to label.name, "color" to label.color, "order" to label.order)
+                    val ops =
+                        listOf(setOp(user.collection("labels").document(label.id), fields)) +
+                            attached.map {
+                                updateOp(
+                                    notes.document(it.id),
+                                    mapOf("labelIds" to FieldValue.arrayUnion(label.id)),
+                                )
+                            }
+                    commitLabelAndAttachments(user, ops)
+                }.await(),
+            ) { "restoreLabel failed: write dropped" }
+        }
+
+        private fun commitLabelAndAttachments(
+            user: DocumentReference,
+            ops: List<BatchOp>,
+        ) {
+            for (chunk in ops.chunked(BATCH_LIMIT)) {
+                check(commitBatch(user, chunk)) { "uid changed" }
             }
         }
     }

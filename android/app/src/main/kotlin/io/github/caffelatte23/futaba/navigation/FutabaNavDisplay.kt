@@ -54,8 +54,19 @@ fun FutabaNavDisplay(modifier: Modifier = Modifier) {
                         onTrash = { backStack.add(Trash) },
                     )
                 }
-                entry<LabelEdit> { Placeholder("LabelEdit") }
-                entry<Trash> { Placeholder("Trash") }
+                entry<LabelEdit> {
+                    io.github.caffelatte23.futaba.feature.labels.LabelEditScreen(
+                        onBack = { backStack.removeLastOrNull() },
+                    )
+                }
+                entry<Trash> {
+                    io.github.caffelatte23.futaba.feature.trash.TrashScreen(onBack = { backStack.removeLastOrNull() }) {
+                        Placeholder(
+                            androidx.compose.ui.res
+                                .stringResource(io.github.caffelatte23.futaba.R.string.trash_empty),
+                        )
+                    }
+                }
             },
     )
 }

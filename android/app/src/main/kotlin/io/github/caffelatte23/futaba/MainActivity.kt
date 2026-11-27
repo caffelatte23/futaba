@@ -13,6 +13,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
 import io.github.caffelatte23.futaba.core.data.ComposerFocusRequests
+import io.github.caffelatte23.futaba.core.data.NoteRepository
 import io.github.caffelatte23.futaba.core.data.ThemeMode
 import io.github.caffelatte23.futaba.core.data.UserPreferencesRepository
 import io.github.caffelatte23.futaba.core.designsystem.FutabaTheme
@@ -22,6 +23,7 @@ import io.github.caffelatte23.futaba.navigation.FutabaNavDisplay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import java.time.Instant
 import javax.inject.Inject
 
 /** Set by launchers (Task 14) to focus the composer regardless of the setting. */
@@ -35,6 +37,8 @@ class MainActivity : ComponentActivity() {
     lateinit var appScope: CoroutineScope
 
     @Inject lateinit var focusRequests: ComposerFocusRequests
+
+    @Inject lateinit var notes: NoteRepository
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -64,6 +68,11 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         if (intent.getBooleanExtra(EXTRA_FOCUS_COMPOSER, false)) focusRequests.request()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        appScope.launch { notes.purgeTrash(Instant.now()) }
     }
 
     override fun onStop() {
