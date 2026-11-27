@@ -3,6 +3,7 @@
   "private": true,
   "packageManager": "pnpm@12.23.0",
   "scripts": {
+    "check:device": "pnpm --filter firebase exec firebase emulators:exec --only auth,firestore --project demo-futaba \"node ../scripts/gradlew.mjs connectedDebugAndroidTest\"",
     "check": "pnpm -r --if-present check && node scripts/gradlew.mjs check",
     "format": "pnpm -r --if-present format && node scripts/gradlew.mjs spotlessApply",
     "prepare": "lefthook install"
