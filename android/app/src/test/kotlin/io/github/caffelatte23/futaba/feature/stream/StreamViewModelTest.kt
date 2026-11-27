@@ -7,6 +7,7 @@ import app.cash.turbine.test
 import com.google.common.truth.Truth.assertThat
 import io.github.caffelatte23.futaba.core.data.DraftStore
 import io.github.caffelatte23.futaba.core.data.NoteRepository
+import io.github.caffelatte23.futaba.core.data.UndoBus
 import io.github.caffelatte23.futaba.core.data.UserPreferencesRepository
 import io.github.caffelatte23.futaba.core.domain.labelUsage
 import io.github.caffelatte23.futaba.core.domain.suggestLabels
@@ -66,7 +67,7 @@ class StreamViewModelTest {
     private fun vm(
         filter: NoteFilter = NoteFilter.All,
         appScope: CoroutineScope = CoroutineScope(main.dispatcher),
-    ) = StreamViewModel(repo, prefs, drafts, uid, appScope, filter)
+    ) = StreamViewModel(repo, prefs, drafts, uid, appScope, UndoBus(), filter)
 
     @Test
     fun sendIgnoresBlankText() =
@@ -184,7 +185,8 @@ class StreamViewModelTest {
             val prefs = prefsWith(CompletableDeferred(Unit)) { writes++ }
             prefs.setDraft("saved")
             val drafts = DraftStore(prefs)
-            val vm = StreamViewModel(repo, prefs, drafts, uid, CoroutineScope(main.dispatcher), NoteFilter.All)
+            val vm =
+                StreamViewModel(repo, prefs, drafts, uid, CoroutineScope(main.dispatcher), UndoBus(), NoteFilter.All)
             assertThat(vm.draftNow()).isEqualTo("saved")
             advanceTimeBy(301)
 
@@ -203,6 +205,7 @@ class StreamViewModelTest {
                     DraftStore(prefs),
                     uid,
                     CoroutineScope(main.dispatcher),
+                    UndoBus(),
                     NoteFilter.All,
                 )
             vm.onDraftChange("early")
@@ -257,7 +260,8 @@ class StreamViewModelTest {
                     override val notes: Flow<List<Note>> = emptyFlow()
                     override val labels: Flow<List<Label>> = emptyFlow()
                 }
-            val vm = StreamViewModel(silent, prefs, drafts, uid, CoroutineScope(main.dispatcher), NoteFilter.All)
+            val vm =
+                StreamViewModel(silent, prefs, drafts, uid, CoroutineScope(main.dispatcher), UndoBus(), NoteFilter.All)
             vm.state.test { assertThat(expectMostRecentItem().draftLoaded).isTrue() }
         }
 

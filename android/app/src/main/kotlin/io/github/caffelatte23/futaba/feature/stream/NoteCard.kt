@@ -61,8 +61,11 @@ fun NoteCard(
 }
 
 @Composable
-private fun LabelChip(name: String) {
-    Surface(shape = CircleShape, color = MaterialTheme.colorScheme.background) {
+fun LabelChip(
+    name: String,
+    modifier: Modifier = Modifier,
+) {
+    Surface(modifier = modifier, shape = CircleShape, color = MaterialTheme.colorScheme.background) {
         Text(
             "#$name",
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),

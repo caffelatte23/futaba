@@ -1,6 +1,9 @@
 package io.github.caffelatte23.futaba.core.designsystem
 
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -50,3 +53,8 @@ internal val FutabaTypography =
             labelSmall = it.labelSmall.sans(),
         )
     }
+
+/** Timestamps and counts: label size in the mono face. */
+@Composable
+@ReadOnlyComposable
+fun timestampStyle(): TextStyle = MaterialTheme.typography.labelMedium.copy(fontFamily = FutabaMono)
