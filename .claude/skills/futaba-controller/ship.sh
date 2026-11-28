@@ -2,13 +2,14 @@
 # Usage: ship.sh <worktree> <issue#> <branch> <title> <implementer> <reviewer> <review-file>...
 # Push branch (pre-push runs pnpm check), open PR (Closes #N), post reviews as a comment, squash-merge.
 set -euo pipefail
+: "${CLOSE:?set CLOSE=Closes or CLOSE=Refs}"
 WT=$1 N=$2 BR=$3 TITLE=$4 IMPL=$5 REV=$6; shift 6
 R=caffelatte23/futaba
 cd "$WT"
 git push -u origin "$BR"
 BODY=$(mktemp)
 {
-  echo "${CLOSE:-Closes} #$N"
+  echo "$CLOSE #$N"
   echo
   echo "- 実装: $IMPL ／ レビュー: $REV（APPROVED）"
   echo "- 検査: lefthook pre-push の \`pnpm check\` 通過"
