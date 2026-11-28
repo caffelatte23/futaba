@@ -13,7 +13,7 @@ BODY=$(mktemp)
   echo
   echo "- 実装: $IMPL ／ レビュー: $REV（APPROVED）"
   echo "- 検査: lefthook pre-push の \`pnpm check\` 通過"
-  echo "- 計画: docs/plans/v1.md の Task $N"
+  echo "- 計画: 手元の docs/plans/（git 管理外）・Issue #$N の本文"
 } > "$BODY"
 gh pr view "$BR" -R $R >/dev/null 2>&1 || gh pr create -R $R --base main --head "$BR" --title "$TITLE" --body-file "$BODY"
 CMT=$(mktemp)
