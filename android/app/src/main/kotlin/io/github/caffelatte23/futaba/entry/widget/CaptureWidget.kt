@@ -141,6 +141,7 @@ private fun RecentIdeasWidget(modifier: GlanceModifier = GlanceModifier) {
                 GlanceModifier
                     .fillMaxWidth()
                     .defaultWeight()
+                    .padding(top = 10.dp)
                     .clickable(actionStartActivity<MainActivity>()),
         ) {
             val previews = rows

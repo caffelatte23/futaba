@@ -7,8 +7,18 @@ import android.os.Build
 import android.service.quicksettings.TileService
 import io.github.caffelatte23.futaba.EXTRA_FOCUS_COMPOSER
 import io.github.caffelatte23.futaba.MainActivity
+import io.github.caffelatte23.futaba.R
 
 class CaptureTileService : TileService() {
+    override fun onStartListening() {
+        super.onStartListening()
+        qsTile?.apply {
+            label = getString(R.string.capture_tile_label)
+            contentDescription = getString(R.string.capture_tile_content_description)
+            updateTile()
+        }
+    }
+
     // Android 13 and earlier require the Intent overload.
     @SuppressLint("StartActivityAndCollapseDeprecated")
     @Suppress("DEPRECATION")
