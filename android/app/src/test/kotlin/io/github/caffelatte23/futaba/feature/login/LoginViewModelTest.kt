@@ -15,24 +15,16 @@ class LoginViewModelTest {
     private val context = ContextWrapper(null)
 
     @Test
-    fun signedInUserStartsOnStream() =
-        runTest {
-            val vm = LoginViewModel(MutableStateFlow(true)) { LinkResult.Cancelled }
-            // The very first value is already "signed in": no waiting state in between.
-            assertThat(vm.signedIn.value).isTrue()
-        }
-
-    @Test
-    fun signInOfflineShowsMessage() =
+    fun failedSignInShowsMessageAndKeepsButtonUsable() =
         runTest {
             var calls = 0
             val vm =
-                LoginViewModel(MutableStateFlow(false)) {
+                LoginViewModel(MutableStateFlow(true)) {
                     calls++
-                    LinkResult.Failed("offline")
+                    LinkResult.Failed("failed")
                 }
             vm.signIn(context)
-            assertThat(vm.state.value.message).isEqualTo("offline")
+            assertThat(vm.state.value.message).isEqualTo("failed")
             assertThat(vm.state.value.busy).isFalse()
             vm.signIn(context)
             assertThat(calls).isEqualTo(2)
@@ -41,9 +33,29 @@ class LoginViewModelTest {
     @Test
     fun cancelledShowsNoMessage() =
         runTest {
-            val vm = LoginViewModel(MutableStateFlow(false)) { LinkResult.Cancelled }
+            val vm = LoginViewModel(MutableStateFlow(true)) { LinkResult.Cancelled }
             vm.signIn(context)
             assertThat(vm.state.value.message).isNull()
             assertThat(vm.state.value.busy).isFalse()
+        }
+
+    @Test
+    fun offlineShowsNoticeAndDoesNotLaunchAuth() =
+        runTest {
+            val online = MutableStateFlow(false)
+            var calls = 0
+            val vm =
+                LoginViewModel(online) {
+                    calls++
+                    LinkResult.Cancelled
+                }
+            assertThat(vm.state.value.offline).isTrue()
+            vm.signIn(context)
+            assertThat(calls).isEqualTo(0)
+            assertThat(vm.state.value.busy).isFalse()
+            online.value = true
+            assertThat(vm.state.value.offline).isFalse()
+            vm.signIn(context)
+            assertThat(calls).isEqualTo(1)
         }
 }

@@ -1,6 +1,5 @@
 package io.github.caffelatte23.futaba.feature.settings
 
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts.CreateDocument
 import androidx.compose.foundation.clickable
@@ -50,7 +49,6 @@ private data class SettingsContent(
     val pendingWrites: Int,
     val theme: ThemeMode,
     val openKeyboard: Boolean,
-    val busy: Boolean,
 )
 
 @Composable
@@ -77,15 +75,14 @@ fun SettingsScreen(
             viewModel.clearMessage()
         }
     }
-    BackHandler(enabled = operation.busy) {}
 
     Box(modifier) {
         Scaffold(
-            topBar = { SettingsTopBar(operation.busy, onBack) },
+            topBar = { SettingsTopBar(onBack) },
             snackbarHost = { SnackbarHost(snackbar) },
         ) { padding ->
             SettingsRows(
-                content = SettingsContent(account, counts, pending, theme, openKeyboard, operation.busy),
+                content = SettingsContent(account, counts, pending, theme, openKeyboard),
                 padding = padding,
                 onExport = { export.launch(viewModel.exportFilename()) },
                 onTrash = onTrash,
@@ -99,14 +96,11 @@ fun SettingsScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SettingsTopBar(
-    busy: Boolean,
-    onBack: () -> Unit,
-) {
+private fun SettingsTopBar(onBack: () -> Unit) {
     TopAppBar(
         title = { Text(stringResource(R.string.settings_title)) },
         navigationIcon = {
-            IconButton(onClick = onBack, enabled = !busy) {
+            IconButton(onClick = onBack) {
                 Icon(painterResource(R.drawable.ic_settings_back), stringResource(R.string.settings_back))
             }
         },
@@ -132,13 +126,13 @@ private fun SettingsRows(
         SettingsRow(
             text = stringResource(R.string.settings_export),
             subtitle = content.counts?.let { stringResource(R.string.settings_count, it.active) },
-            enabled = !content.busy && content.counts != null,
+            enabled = content.counts != null,
             onClick = onExport,
         )
         SettingsRow(
             text = stringResource(R.string.settings_trash),
             subtitle = content.counts?.let { stringResource(R.string.settings_trash_count, it.trashed) },
-            enabled = !content.busy,
+            enabled = true,
             onClick = onTrash,
         )
         HorizontalDivider()
@@ -160,7 +154,7 @@ private fun SettingsRows(
                 ),
         )
         HorizontalDivider()
-        TextButton(onClick = onSignOut, enabled = !content.busy, modifier = Modifier.padding(horizontal = 8.dp)) {
+        TextButton(onClick = onSignOut, modifier = Modifier.padding(horizontal = 8.dp)) {
             Text(stringResource(R.string.settings_sign_out), color = MaterialTheme.colorScheme.error)
         }
         Text(

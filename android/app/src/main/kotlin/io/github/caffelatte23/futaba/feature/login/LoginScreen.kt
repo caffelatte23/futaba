@@ -71,9 +71,11 @@ fun LoginScreen(
         ) {
             Text(stringResource(R.string.login_button))
         }
-        val failed = state.message != null
+        val note =
+            state.message ?: stringResource(if (state.offline) R.string.login_offline else R.string.login_note_keep)
+        val failed = state.message != null || state.offline
         Text(
-            state.message ?: stringResource(R.string.login_note_keep),
+            note,
             modifier = Modifier.padding(top = 16.dp),
             style = MaterialTheme.typography.bodySmall,
             color = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,

@@ -37,7 +37,6 @@ import javax.inject.Inject
 private const val TAG = "SettingsViewModel"
 
 data class SettingsOperation(
-    val busy: Boolean = false,
     @param:StringRes val message: Int? = null,
 )
 
@@ -94,7 +93,7 @@ class SettingsViewModel
                 }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), null)
 
         fun signOut() {
-            auth.signOut()
+            viewModelScope.launch { auth.signOut() }
         }
 
         fun clearMessage() {

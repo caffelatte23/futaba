@@ -41,7 +41,7 @@ class ShareActivity : ComponentActivity() {
                 finish()
             }
 
-            auth.uid.value == null -> {
+            shareGoesToDraft(auth.signedIn.value) -> {
                 saveDraft(text)
             }
 
