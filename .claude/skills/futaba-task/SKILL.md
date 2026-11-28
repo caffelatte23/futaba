@@ -9,7 +9,7 @@ description: Futaba の実装タスク（Issue / 計画の Task N）を1つ実�
 
 ## 開始前
 
-1. 渡された brief（Task の全文）、`AGENTS.md`、`docs/design.md` の関係節を読む。
+1. 渡された brief（Task の全文）、`AGENTS.md`、設計メモ（git 管理外。`C:/Users/Caffe/Desktop/Scripts/mobile/idea-book-app/docs/design.md`）の関係節を読む。
 2. 既存コードの型（ViewModel＋Nav3 entry decorator、vector drawable、FutabaTheme トークン、FakeNoteRepository 等）を確認し、それに合わせる。
 3. 自分のブランチ `task/<N>-<slug>` にいることを確認。**push・PR・マージはしない**（調整役の仕事）。
 
