@@ -177,6 +177,8 @@ dependencies {
     implementation(libs.datastore.preferences)
     implementation(libs.glance.appwidget)
     implementation(libs.glance.material3)
+    // Override Glance's older WorkManager and Room for minified release startup (#51).
+    implementation(libs.work.runtime.ktx)
 
     debugImplementation(libs.compose.ui.tooling)
     debugImplementation(libs.compose.ui.test.manifest)
