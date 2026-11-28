@@ -1,7 +1,5 @@
 package io.github.caffelatte23.futaba.feature.settings
 
-import androidx.activity.compose.BackHandler
-import androidx.activity.compose.LocalActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts.CreateDocument
 import androidx.compose.foundation.clickable
@@ -51,7 +49,6 @@ private data class SettingsContent(
     val pendingWrites: Int,
     val theme: ThemeMode,
     val openKeyboard: Boolean,
-    val busy: Boolean,
 )
 
 @Composable
@@ -67,9 +64,7 @@ fun SettingsScreen(
     val pending by viewModel.pendingWrites.collectAsStateWithLifecycle()
     val theme by viewModel.theme.collectAsStateWithLifecycle()
     val openKeyboard by viewModel.openKeyboardOnLaunch.collectAsStateWithLifecycle()
-    val activity = LocalActivity.current
     val snackbar = remember { SnackbarHostState() }
-    var showSync by rememberSaveable { mutableStateOf(false) }
     val export =
         rememberLauncherForActivityResult(CreateDocument("text/markdown")) { uri -> uri?.let(viewModel::export) }
 
@@ -80,17 +75,15 @@ fun SettingsScreen(
             viewModel.clearMessage()
         }
     }
-    BackHandler(enabled = operation.busy && !showSync) {}
 
     Box(modifier) {
         Scaffold(
-            topBar = { SettingsTopBar(operation.busy, onBack) },
+            topBar = { SettingsTopBar(onBack) },
             snackbarHost = { SnackbarHost(snackbar) },
         ) { padding ->
             SettingsRows(
-                content = SettingsContent(account, counts, pending, theme, openKeyboard, operation.busy),
+                content = SettingsContent(account, counts, pending, theme, openKeyboard),
                 padding = padding,
-                onSync = { showSync = true },
                 onExport = { export.launch(viewModel.exportFilename()) },
                 onTrash = onTrash,
                 onTheme = viewModel::setTheme,
@@ -98,30 +91,16 @@ fun SettingsScreen(
                 onSignOut = viewModel::signOut,
             )
         }
-        if (showSync) {
-            SyncSheet(
-                noteCount = counts?.active,
-                operation = operation,
-                onLink = { activity?.let(viewModel::linkGoogle) },
-                onDismiss = {
-                    showSync = false
-                    viewModel.dismissSync()
-                },
-            )
-        }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SettingsTopBar(
-    busy: Boolean,
-    onBack: () -> Unit,
-) {
+private fun SettingsTopBar(onBack: () -> Unit) {
     TopAppBar(
         title = { Text(stringResource(R.string.settings_title)) },
         navigationIcon = {
-            IconButton(onClick = onBack, enabled = !busy) {
+            IconButton(onClick = onBack) {
                 Icon(painterResource(R.drawable.ic_settings_back), stringResource(R.string.settings_back))
             }
         },
@@ -133,29 +112,27 @@ private fun SettingsTopBar(
 private fun SettingsRows(
     content: SettingsContent,
     padding: PaddingValues,
-    onSync: () -> Unit,
     onExport: () -> Unit,
     onTrash: () -> Unit,
     onTheme: (ThemeMode) -> Unit,
     onKeyboard: (Boolean) -> Unit,
     onSignOut: () -> Unit,
 ) {
-    val linked = content.account?.isAnonymous == false
     Column(Modifier.padding(padding).verticalScroll(rememberScrollState())) {
         SettingsSection(stringResource(R.string.settings_sync))
-        SyncSettings(content.account?.email, linked, content.pendingWrites, content.busy, onSync)
+        AccountRow(content.account?.email, content.pendingWrites)
         HorizontalDivider()
         SettingsSection(stringResource(R.string.settings_data))
         SettingsRow(
             text = stringResource(R.string.settings_export),
             subtitle = content.counts?.let { stringResource(R.string.settings_count, it.active) },
-            enabled = !content.busy && content.counts != null,
+            enabled = content.counts != null,
             onClick = onExport,
         )
         SettingsRow(
             text = stringResource(R.string.settings_trash),
             subtitle = content.counts?.let { stringResource(R.string.settings_trash_count, it.trashed) },
-            enabled = !content.busy,
+            enabled = true,
             onClick = onTrash,
         )
         HorizontalDivider()
@@ -176,18 +153,16 @@ private fun SettingsRows(
                     onValueChange = onKeyboard,
                 ),
         )
-        if (linked) {
-            HorizontalDivider()
-            TextButton(onClick = onSignOut, enabled = !content.busy, modifier = Modifier.padding(horizontal = 8.dp)) {
-                Text(stringResource(R.string.settings_sign_out), color = MaterialTheme.colorScheme.error)
-            }
-            Text(
-                stringResource(R.string.settings_sign_out_description),
-                modifier = Modifier.padding(horizontal = 16.dp),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+        HorizontalDivider()
+        TextButton(onClick = onSignOut, modifier = Modifier.padding(horizontal = 8.dp)) {
+            Text(stringResource(R.string.settings_sign_out), color = MaterialTheme.colorScheme.error)
         }
+        Text(
+            stringResource(R.string.settings_sign_out_description),
+            modifier = Modifier.padding(horizontal = 16.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -202,14 +177,10 @@ private fun SettingsSection(title: String) {
 }
 
 @Composable
-private fun SyncSettings(
+private fun AccountRow(
     email: String?,
-    linked: Boolean,
     pending: Int,
-    busy: Boolean,
-    onSync: () -> Unit,
 ) {
-    val account = email ?: stringResource(R.string.settings_unlinked)
     val status =
         if (pending == 0) {
             stringResource(R.string.settings_sent)
@@ -217,18 +188,8 @@ private fun SyncSettings(
             stringResource(R.string.settings_pending, pending)
         }
     ListItem(
-        headlineContent = { Text(stringResource(R.string.settings_google_account)) },
-        supportingContent = { Text("$account\n$status") },
-        trailingContent =
-            if (linked) {
-                null
-            } else {
-                {
-                    TextButton(onClick = onSync, enabled = !busy) {
-                        Text(stringResource(R.string.settings_google_sync))
-                    }
-                }
-            },
+        headlineContent = { Text(email ?: stringResource(R.string.settings_google_account)) },
+        supportingContent = { Text(status) },
     )
 }
 

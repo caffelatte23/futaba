@@ -45,6 +45,66 @@ class AuthMergeTest {
             }
         }
 
+    @Test
+    fun anonymousUserSignInLinksAndKeepsNotes() =
+        runBlocking {
+            withTimeout(45_000L) {
+                val id = UUID.randomUUID().toString()
+                val app = createTestApp(id)
+                val auth = FirebaseAuth.getInstance(app)
+                val db = FirebaseFirestore.getInstance(app)
+                auth.useEmulator(HOST, 9099)
+                configureMergeFirestoreEmulator(db, enabled = true)
+                try {
+                    val anonymous = checkNotNull(auth.signInAnonymously().await().user)
+                    val source = db.collection("users").document(anonymous.uid)
+                    source.seedNote("a", "first", "")
+                    source.seedNote("b", "second", "")
+                    val repository = AuthRepository(auth, db)
+                    assertThat(repository.signedIn.value).isFalse()
+                    assertThat(repository.signInGoogleCredential(googleCredential(id))).isEqualTo(LinkResult.Linked)
+                    assertThat(repository.uid.value).isEqualTo(anonymous.uid)
+                    assertThat(repository.signedIn.value).isTrue()
+                    assertThat(
+                        source
+                            .collection("notes")
+                            .get(Source.SERVER)
+                            .await()
+                            .size(),
+                    ).isEqualTo(2)
+                } finally {
+                    auth.signOut()
+                    app.delete()
+                }
+            }
+        }
+
+    @Test
+    fun signOutDoesNotCreateAnonymousUser() =
+        runBlocking {
+            withTimeout(45_000L) {
+                val id = UUID.randomUUID().toString()
+                val app = createTestApp(id)
+                val auth = FirebaseAuth.getInstance(app)
+                val db = FirebaseFirestore.getInstance(app)
+                auth.useEmulator(HOST, 9099)
+                try {
+                    val repository = AuthRepository(auth, db)
+                    assertThat(repository.signInGoogleCredential(googleCredential(id))).isEqualTo(LinkResult.Linked)
+                    assertThat(repository.signedIn.value).isTrue()
+                    repository.signOut()
+                    assertThat(auth.currentUser).isNull()
+                    assertThat(repository.signedIn.value).isFalse()
+                } finally {
+                    auth.signOut()
+                    app.delete()
+                }
+            }
+        }
+
+    private fun googleCredential(id: String) =
+        GoogleAuthProvider.getCredential("""{"sub":"$id","email":"$id@example.com","email_verified":true}""", null)
+
     private suspend fun verifyCollision(
         auth: FirebaseAuth,
         db: FirebaseFirestore,
@@ -71,7 +131,7 @@ class AuthMergeTest {
         val appsBeforeMerge = FirebaseApp.getApps(appContext).map { it.name }
         val failingMigration = GoogleAccountMigration(auth, db) { error("Secondary Firestore setup failed") }
         assertThat(
-            repository.linkGoogleCredential(credential, failingMigration),
+            repository.signInGoogleCredential(credential, failingMigration),
         ).isInstanceOf(LinkResult.Failed::class.java)
         assertThat(repository.uid.value).isEqualTo(anonymous.uid)
         assertThat(FirebaseApp.getApps(appContext).map { it.name }).containsExactlyElementsIn(appsBeforeMerge)
@@ -80,7 +140,7 @@ class AuthMergeTest {
             GoogleAccountMigration(auth, db) { secondaryDb ->
                 configureMergeFirestoreEmulator(secondaryDb, enabled = true)
             }
-        assertThat(repository.linkGoogleCredential(credential, migration)).isEqualTo(LinkResult.Merged(2))
+        assertThat(repository.signInGoogleCredential(credential, migration)).isEqualTo(LinkResult.Merged(2))
         assertThat(FirebaseApp.getApps(appContext).map { it.name }).containsExactlyElementsIn(appsBeforeMerge)
         assertThat(repository.uid.value).isEqualTo(google.uid)
         assertThat(checkNotNull(auth.currentUser).getIdToken(true).await().token).isNotEmpty()

@@ -10,7 +10,6 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import io.github.caffelatte23.futaba.R
 import io.github.caffelatte23.futaba.core.data.AuthRepository
-import io.github.caffelatte23.futaba.core.data.LinkResult
 import io.github.caffelatte23.futaba.core.data.NoteRepository
 import io.github.caffelatte23.futaba.core.data.ThemeMode
 import io.github.caffelatte23.futaba.core.data.UserPreferencesRepository
@@ -38,8 +37,6 @@ import javax.inject.Inject
 private const val TAG = "SettingsViewModel"
 
 data class SettingsOperation(
-    val busy: Boolean = false,
-    val linkResult: LinkResult? = null,
     @param:StringRes val message: Int? = null,
 )
 
@@ -95,26 +92,8 @@ class SettingsViewModel
                     }
                 }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(), null)
 
-        fun linkGoogle(activity: Context) {
-            if (_operation.value.busy) return
-            _operation.value = SettingsOperation(busy = true)
-            viewModelScope.launch {
-                _operation.value = SettingsOperation(linkResult = auth.linkGoogle(activity))
-            }
-        }
-
         fun signOut() {
-            if (_operation.value.busy) return
-            _operation.value = SettingsOperation(busy = true)
-            viewModelScope.launch {
-                val signedIn = auth.signOut()
-                _operation.value =
-                    SettingsOperation(message = R.string.settings_anonymous_failed.takeUnless { signedIn })
-            }
-        }
-
-        fun dismissSync() {
-            _operation.update { it.copy(linkResult = null) }
+            viewModelScope.launch { auth.signOut() }
         }
 
         fun clearMessage() {

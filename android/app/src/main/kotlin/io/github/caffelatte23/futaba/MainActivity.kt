@@ -12,6 +12,7 @@ import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
+import io.github.caffelatte23.futaba.core.data.AuthRepository
 import io.github.caffelatte23.futaba.core.data.ComposerFocusRequests
 import io.github.caffelatte23.futaba.core.data.NoteRepository
 import io.github.caffelatte23.futaba.core.data.ThemeMode
@@ -19,6 +20,7 @@ import io.github.caffelatte23.futaba.core.data.UserPreferencesRepository
 import io.github.caffelatte23.futaba.core.designsystem.FutabaTheme
 import io.github.caffelatte23.futaba.di.ApplicationScope
 import io.github.caffelatte23.futaba.entry.widget.CaptureWidget
+import io.github.caffelatte23.futaba.feature.login.LoginScreen
 import io.github.caffelatte23.futaba.navigation.FutabaNavDisplay
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.first
@@ -40,6 +42,8 @@ class MainActivity : ComponentActivity() {
 
     @Inject lateinit var notes: NoteRepository
 
+    @Inject lateinit var auth: AuthRepository
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -50,6 +54,7 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             val theme by preferences.theme.collectAsStateWithLifecycle(ThemeMode.System)
+            val signedIn by auth.signedIn.collectAsStateWithLifecycle()
             val darkTheme =
                 when (theme) {
                     ThemeMode.System -> isSystemInDarkTheme()
@@ -58,7 +63,7 @@ class MainActivity : ComponentActivity() {
                 }
             FutabaTheme(darkTheme = darkTheme) {
                 Surface(color = MaterialTheme.colorScheme.background) {
-                    FutabaNavDisplay()
+                    if (signedIn) FutabaNavDisplay() else LoginScreen()
                 }
             }
         }

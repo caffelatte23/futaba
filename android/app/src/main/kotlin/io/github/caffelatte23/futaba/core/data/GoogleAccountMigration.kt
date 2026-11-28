@@ -47,7 +47,7 @@ internal class GoogleAccountMigration(
             val mainData = FirestoreAccountMerge(firestore)
             val copied =
                 copyToGoogle(anonymous, credential, mainData, secondary)
-                    ?: return LinkResult.Failed(app.applicationContext.getString(R.string.settings_sync_failed))
+                    ?: return LinkResult.Failed(app.applicationContext.getString(R.string.login_failed))
             cleanup(anonymous, mainData, copied.source)
             signInMain(credential, copied.googleUid, FirebaseAuth.getInstance(secondary), refreshCredential)
             return LinkResult.Merged(copied.noteCount)
