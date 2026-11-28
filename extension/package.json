@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "check": "wxt prepare && tsc --noEmit && oxlint && oxfmt --check && vitest run",
+    "test": "wxt prepare && vitest run",
     "format": "oxfmt",
     "build": "wxt build",
     "dev": "wxt"
