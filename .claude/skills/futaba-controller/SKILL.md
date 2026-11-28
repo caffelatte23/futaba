@@ -24,5 +24,8 @@ description: Futaba の実装を調整役（Opus）として進めるときの�
 ## 運用上の決まり
 
 - `gradlew --stop` は誰も作業していないときに調整役だけが実行。
-- エミュレータは必要なときだけ起動（メモリ不足で自動停止される）。
+- エミュレータは必要なときだけ起動（メモリ不足で自動停止される）。ワイヤレスデバッグの実機がつながっていれば実機を使う（`10.0.2.2` を使う `check:device` は実機では動かない）。
+- 同時に動かすエージェントは2本まで（15.6GB のメモリでエミュレータ・Gradle・Firestore エミュレータが重なると OS に自動停止される）。
+- タスク完了時と自動停止が起きたときに後片付け: 親のいない Firestore エミュレータ（cloud-firestore-emulator の java）・Gradle/Kotlin デーモン・エミュレータを確認し、誰も作業していなければ止める。コマンドラインまで確認し、ユーザーのアプリ（Claude/Codex/ChatGPT デスクトップ等）は止めない。
+- `ship.sh` は `CLOSE=Closes` か `CLOSE=Refs` を必ず付けて実行する（未指定ならスクリプトが止まる）。
 - `.superpowers/` は gitignore。台帳・brief・report・review はそこに置く。

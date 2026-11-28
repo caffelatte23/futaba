@@ -28,6 +28,7 @@ description: Futaba の実装タスク（Issue / 計画の Task N）を1つ実�
 - **Firestore の読み込み直後の空や一時的な値**で破壊的な処理（フォールバック・削除）をしない。uid 確定＋データ到着を条件にする。
 - suspend の repository 呼び出しは失敗し得る（未ログイン等）。UI では CancellationException 以外を捕まえて表示し、入力は保持する。
 - メインスレッドで全件処理しない（`flowOn(Dispatchers.Default)`、入力は debounce）。
+- **UI の一時状態の判定は持ち主から同期的に読む**: シートを閉じてよいか・送信してよいか等を、再コンポーズ後の Compose 状態で判定しない。持ち主（セッション/ViewModel）のフィールドを同期的に読む単一の述語（例 `canClose()`）を、ジェスチャー・戻る・完了・キャンセルのすべての経路で使う。
 
 ## 検査・ビルド
 
