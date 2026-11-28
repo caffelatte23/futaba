@@ -71,8 +71,13 @@ fun LoginScreen(
         ) {
             Text(stringResource(R.string.login_button))
         }
+        // Offline takes priority over an earlier failure message.
         val note =
-            state.message ?: stringResource(if (state.offline) R.string.login_offline else R.string.login_note_keep)
+            if (state.offline) {
+                stringResource(R.string.login_offline)
+            } else {
+                state.message ?: stringResource(R.string.login_note_keep)
+            }
         val failed = state.message != null || state.offline
         Text(
             note,

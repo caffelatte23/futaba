@@ -4,6 +4,7 @@ import android.content.ContextWrapper
 import com.google.common.truth.Truth.assertThat
 import io.github.caffelatte23.futaba.core.data.LinkResult
 import io.github.caffelatte23.futaba.testing.MainDispatcherRule
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.runTest
 import org.junit.Rule
@@ -57,5 +58,25 @@ class LoginViewModelTest {
             assertThat(vm.state.value.offline).isFalse()
             vm.signIn(context)
             assertThat(calls).isEqualTo(1)
+        }
+
+    @Test
+    fun noSecondSignInWhileFirstIsPending() =
+        runTest {
+            val gate = CompletableDeferred<LinkResult>()
+            var calls = 0
+            val vm =
+                LoginViewModel(MutableStateFlow(true)) {
+                    calls++
+                    gate.await()
+                }
+            vm.signIn(context)
+            assertThat(vm.state.value.busy).isTrue()
+            vm.signIn(context)
+            assertThat(calls).isEqualTo(1)
+            gate.complete(LinkResult.Cancelled)
+            assertThat(vm.state.value.busy).isFalse()
+            vm.signIn(context)
+            assertThat(calls).isEqualTo(2)
         }
 }

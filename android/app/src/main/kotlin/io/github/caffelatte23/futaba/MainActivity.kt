@@ -63,10 +63,7 @@ class MainActivity : ComponentActivity() {
                 }
             FutabaTheme(darkTheme = darkTheme) {
                 Surface(color = MaterialTheme.colorScheme.background) {
-                    when (startScreen(signedIn)) {
-                        StartScreen.Stream -> FutabaNavDisplay()
-                        StartScreen.Login -> LoginScreen()
-                    }
+                    if (signedIn) FutabaNavDisplay() else LoginScreen()
                 }
             }
         }
@@ -88,7 +85,3 @@ class MainActivity : ComponentActivity() {
         appScope.launch { CaptureWidget().refreshAll(applicationContext) }
     }
 }
-
-internal enum class StartScreen { Login, Stream }
-
-internal fun startScreen(signedIn: Boolean): StartScreen = if (signedIn) StartScreen.Stream else StartScreen.Login

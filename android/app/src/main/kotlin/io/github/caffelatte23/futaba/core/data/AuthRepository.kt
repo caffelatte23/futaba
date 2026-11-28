@@ -18,17 +18,16 @@ import com.google.firebase.auth.GoogleAuthProvider
 import com.google.firebase.firestore.FirebaseFirestore
 import io.github.caffelatte23.futaba.R
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
-import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 import javax.inject.Singleton
 
 private const val TAG = "AuthRepository"
-private const val LINK_TIMEOUT_MS = 30_000L
 
 sealed interface LinkResult {
     data object Linked : LinkResult
@@ -57,28 +56,18 @@ class AuthRepository
         private val firestore: FirebaseFirestore,
     ) {
         private val signInLock = Mutex()
-        private val _uid = MutableStateFlow(auth.currentUser?.uid)
-        val uid: StateFlow<String?> = _uid
-        private val _account = MutableStateFlow(auth.currentUser?.toAccount())
-        val account: StateFlow<AuthAccount?> = _account
-        private val _signedIn = MutableStateFlow(signedInOf(auth.currentUser?.toAccount()))
+        private val session = AuthSession(auth.currentUser?.toStored())
+        val uid: StateFlow<String?> = session.uid
+        val account: StateFlow<AuthAccount?> = session.account
 
         /** True for a non-anonymous user. Seeded synchronously from the persisted user, so no waiting UI is needed. */
-        val signedIn: StateFlow<Boolean> = _signedIn
-
-        // A task whose wait timed out may still complete in the SDK; auth-changing work waits for it.
-        private var pending: Task<*>? = null
+        val signedIn: StateFlow<Boolean> = session.signedIn
 
         init {
             auth.addAuthStateListener { publishUser() }
         }
 
-        private fun publishUser() {
-            val user = auth.currentUser
-            _uid.value = user?.uid
-            _account.value = user?.toAccount()
-            _signedIn.value = signedInOf(user?.toAccount())
-        }
+        private fun publishUser() = session.publish(auth.currentUser?.toStored())
 
         @Suppress("TooGenericExceptionCaught") // Credentials and Firebase expose different failure types.
         suspend fun signInWithGoogle(context: Context): LinkResult =
@@ -105,7 +94,6 @@ class AuthRepository
         ): LinkResult =
             signInLock.withLock {
                 try {
-                    awaitPending()
                     val user = auth.currentUser
                     if (user?.isAnonymous == true) {
                         linkOrMerge(user, credential, migration, refreshCredential)
@@ -125,57 +113,32 @@ class AuthRepository
             refreshCredential: (suspend () -> AuthCredential)?,
         ): LinkResult =
             try {
-                val linked = user.linkWithCredential(credential).awaitWithinTimeout()
-                if (linked != null) {
-                    LinkResult.Linked
-                } else {
-                    Log.w(TAG, "Google linking timed out")
-                    LinkResult.Failed(auth.app.applicationContext.getString(R.string.login_failed))
-                }
+                user.linkWithCredential(credential).awaitCompletely()
+                LinkResult.Linked
             } catch (_: FirebaseAuthUserCollisionException) {
                 migration.merge(user, credential, refreshCredential)
             }
 
-        @Suppress("RedundantSuspendModifier") // Google Tasks await() suspends.
-        private suspend fun signInPlain(credential: AuthCredential): LinkResult =
-            if (auth.signInWithCredential(credential).awaitWithinTimeout() != null) {
-                LinkResult.Linked
-            } else {
-                Log.w(TAG, "Google sign-in timed out")
-                LinkResult.Failed(auth.app.applicationContext.getString(R.string.login_failed))
-            }
+        private suspend fun signInPlain(credential: AuthCredential): LinkResult {
+            auth.signInWithCredential(credential).awaitCompletely()
+            return LinkResult.Linked
+        }
 
         /** Signs out only; never creates an anonymous user. The account's notes stay on the server. */
+        @Suppress("RedundantSuspendModifier") // Mutex.withLock suspends.
         suspend fun signOut() =
             signInLock.withLock {
-                awaitPending()
                 auth.signOut()
                 publishUser()
             }
 
+        // No timeout: auth-changing work stays under the lock until the SDK task itself finishes, even if
+        // the caller is cancelled, so a late success can't race a retry or sign-out.
         @Suppress("RedundantSuspendModifier") // Google Tasks await() suspends.
-        private suspend fun <T> Task<T>.awaitWithinTimeout(): T? {
-            pending = this
-            return withTimeoutOrNull(LINK_TIMEOUT_MS) { await() }
-        }
-
-        @Suppress("TooGenericExceptionCaught", "SwallowedException", "RedundantSuspendModifier")
-        private suspend fun awaitPending() {
-            val task = pending ?: return
-            if (!task.isComplete) {
-                try {
-                    task.await()
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (_: Exception) {
-                    // Its own failure was already reported (or timed out); we only need it to be finished.
-                }
-            }
-            pending = null
-        }
+        private suspend fun <T> Task<T>.awaitCompletely(): T = withContext(NonCancellable) { await() }
     }
 
-private fun FirebaseUser.toAccount() = AuthAccount(isAnonymous, email)
+private fun FirebaseUser.toStored() = StoredUser(uid, isAnonymous, email)
 
 @Suppress("RedundantSuspendModifier") // Credential Manager's getCredential() suspends.
 private suspend fun getGoogleCredential(context: Context): AuthCredential {
@@ -188,6 +151,3 @@ private suspend fun getGoogleCredential(context: Context): AuthCredential {
     check(credential is CustomCredential && credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL)
     return GoogleAuthProvider.getCredential(GoogleIdTokenCredential.createFrom(credential.data).idToken, null)
 }
-
-/** True only for a Google (non-anonymous) account. */
-internal fun signedInOf(account: AuthAccount?): Boolean = account != null && !account.isAnonymous
