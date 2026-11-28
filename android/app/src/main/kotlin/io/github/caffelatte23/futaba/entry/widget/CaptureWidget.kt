@@ -52,7 +52,13 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
 
 private val CompactSize = DpSize(40.dp, 40.dp)
-private val WideSize = DpSize(180.dp, 88.dp)
+private val TouchTargetHeight = 48.dp
+private val WidgetVerticalPadding = 2.dp
+private val WideSizes =
+    (0..MAX_ROWS).associateBy { rowCount ->
+        val contentHeight = TouchTargetHeight * (rowCount + 1)
+        DpSize(180.dp, maxOf(88.dp, contentHeight + WidgetVerticalPadding * 2))
+    }
 private val RefreshVersion = longPreferencesKey("refresh_version")
 private const val NOTES_TIMEOUT_MS = 2_000L
 
@@ -63,7 +69,7 @@ internal interface CaptureWidgetEntryPoint {
 }
 
 class CaptureWidget : GlanceAppWidget() {
-    override val sizeMode = SizeMode.Responsive(setOf(CompactSize, WideSize))
+    override val sizeMode = SizeMode.Responsive(WideSizes.keys + CompactSize)
 
     override suspend fun provideGlance(
         context: Context,
@@ -71,10 +77,11 @@ class CaptureWidget : GlanceAppWidget() {
     ) {
         provideContent {
             GlanceTheme(colors = FutabaWidgetColors) {
-                if (LocalSize.current == WideSize) {
-                    RecentIdeasWidget()
-                } else {
+                val rowCount = WideSizes[LocalSize.current]
+                if (rowCount == null) {
                     CompactCaptureWidget()
+                } else {
+                    RecentIdeasWidget(rowCount)
                 }
             }
         }
@@ -119,7 +126,10 @@ private fun CompactCaptureWidget(modifier: GlanceModifier = GlanceModifier) {
 }
 
 @Composable
-private fun RecentIdeasWidget(modifier: GlanceModifier = GlanceModifier) {
+private fun RecentIdeasWidget(
+    rowCount: Int,
+    modifier: GlanceModifier = GlanceModifier,
+) {
     val context = LocalContext.current
     val rows by produceState<List<String>?>(initialValue = null, key1 = currentState(RefreshVersion)) {
         val repository = EntryPointAccessors.fromApplication<CaptureWidgetEntryPoint>(context).noteRepository()
@@ -132,23 +142,25 @@ private fun RecentIdeasWidget(modifier: GlanceModifier = GlanceModifier) {
                 .fillMaxSize()
                 .appWidgetBackground()
                 .background(GlanceTheme.colors.background)
-                .padding(horizontal = 8.dp, vertical = 2.dp),
+                .padding(horizontal = 8.dp, vertical = WidgetVerticalPadding),
     ) {
         Column(GlanceModifier.fillMaxWidth().defaultWeight()) {
             val previews = rows
             if (previews?.isEmpty() == true) {
                 Text(
                     text = context.getString(R.string.widget_empty),
+                    modifier = GlanceModifier.padding(vertical = 8.dp),
                     style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 14.sp),
                     maxLines = 1,
                 )
             }
-            previews.orEmpty().forEach { preview ->
+            previews.orEmpty().take(rowCount).forEach { preview ->
                 Row(
                     modifier =
                         GlanceModifier
                             .fillMaxWidth()
-                            .defaultWeight()
+                            .height(TouchTargetHeight)
+                            .padding(vertical = 8.dp)
                             .clickable(actionStartActivity(Intent(context, MainActivity::class.java))),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -163,7 +175,7 @@ private fun RecentIdeasWidget(modifier: GlanceModifier = GlanceModifier) {
         Button(
             text = context.getString(R.string.widget_new_idea),
             onClick = captureAction(context),
-            modifier = GlanceModifier.fillMaxWidth().height(32.dp),
+            modifier = GlanceModifier.fillMaxWidth().height(TouchTargetHeight),
             maxLines = 1,
         )
     }
