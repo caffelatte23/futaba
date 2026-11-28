@@ -25,11 +25,15 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,7 +51,10 @@ import io.github.caffelatte23.futaba.core.data.PendingUndo
 import io.github.caffelatte23.futaba.core.data.SharedSnippet
 import io.github.caffelatte23.futaba.core.designsystem.FutabaMono
 import io.github.caffelatte23.futaba.core.domain.dayHeader
+import io.github.caffelatte23.futaba.core.model.Note
 import io.github.caffelatte23.futaba.core.model.NoteFilter
+import io.github.caffelatte23.futaba.feature.labels.LabelSheet
+import io.github.caffelatte23.futaba.feature.labels.LabelSheetContent
 import io.github.caffelatte23.futaba.navigation.Detail
 import io.github.caffelatte23.futaba.navigation.LabelEdit
 import io.github.caffelatte23.futaba.navigation.Search
@@ -63,6 +70,7 @@ import java.time.LocalDate
 
 // Drawer selection flushes the (global) draft before this entry and its ViewModel are replaced.
 @Composable
+@Suppress("LongMethod") // top-level wiring of one screen; splitting would only forward parameters
 fun StreamScreen(
     filter: NoteFilter,
     onNavigate: (NavKey) -> Unit,
@@ -71,6 +79,7 @@ fun StreamScreen(
         hiltViewModel<StreamViewModel, StreamViewModel.Factory>(creationCallback = { it.create(filter) }),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val selecting = state.selection.isNotEmpty()
     // The field is (re)created only after the draft is hydrated, starting from the current draft.
     val composer = remember(viewModel, state.draftLoaded) { viewModel.newComposer(state.draftLoaded) }
     ComposerEffects(
@@ -79,6 +88,7 @@ fun StreamScreen(
         viewModel::syncComposer,
         viewModel::flushComposer,
         viewModel.focusRequested,
+        isHidden = { selecting },
     )
     val snackbar = remember { SnackbarHostState() }
     val undo by viewModel.pendingUndo.collectAsStateWithLifecycle()
@@ -90,6 +100,7 @@ fun StreamScreen(
         onNavigate(it)
     }
     DrawerBackAndFallback(drawer, state.filterMissing, onFallback = { navigate(Stream(NoteFilter.All)) })
+    BackHandler(enabled = selecting, onBack = viewModel::clearSelection)
     ModalNavigationDrawer(
         drawerState = drawer,
         modifier = modifier,
@@ -109,32 +120,37 @@ fun StreamScreen(
                 .navigationBarsPadding()
                 .imePadding(),
         ) {
-            TopBar(
-                title = streamTitle(filter, state.labelNames),
-                count = state.count,
-                onMenu = { scope.launch { drawer.open() } },
-                onSearch = { navigate(Search) },
+            if (selecting) {
+                val actions =
+                    remember(viewModel) {
+                        SelectionActions(
+                            viewModel::clearSelection,
+                            viewModel.labelSheet::open,
+                            viewModel::pinSelected,
+                            viewModel::deleteSelected,
+                        )
+                    }
+                SelectionBar(state.selection.size, state.selectedNotes.all(Note::pinned), state.notesLoaded, actions)
+            } else {
+                TopBar(
+                    title = streamTitle(filter, state.labelNames),
+                    count = state.count,
+                    onMenu = { scope.launch { drawer.open() } },
+                    onSearch = { navigate(Search) },
+                )
+            }
+            StreamList(
+                state,
+                onTap = { if (selecting) viewModel.toggleSelect(it) else navigate(Detail(it)) },
+                onLongPress = viewModel::toggleSelect,
+                modifier = Modifier.weight(1f),
             )
-            StreamList(state, { navigate(Detail(it)) }, Modifier.weight(1f))
             SnackbarHost(snackbar)
-            Composer(
-                composer = composer,
-                canSend = state.canSend,
-                suggestions = remember(state.suggestions, state.usage) { Suggestions(state.suggestions, state.usage) },
-                onSend = { if (viewModel.sendComposer(composer)) composer.focusRequester.requestFocus() },
-            )
+            // Hidden (not just disabled) while selecting: no IME or stray send competes with the bulk actions.
+            if (!selecting) StreamComposer(composer, state) { viewModel.sendComposer(composer) }
         }
     }
-}
-
-private fun streamTitle(
-    filter: NoteFilter,
-    names: LabelNames,
-) = when (filter) {
-    NoteFilter.Pinned -> "ピン留め"
-    NoteFilter.Unlabeled -> "ラベルなし"
-    is NoteFilter.ByLabel -> names.byId[filter.labelId].orEmpty()
-    else -> "Futaba"
+    state.sheet?.let { LabelSheet(LabelSheetContent(state.selectedNotes, state.labels), it, viewModel.labelSheet) }
 }
 
 @Composable
@@ -181,17 +197,20 @@ private fun DrawerBackAndFallback(
 }
 
 @Composable
+@Suppress("LongParameterList") // each callback is a distinct ViewModel hook
 private fun ComposerEffects(
     composer: ComposerState,
     sharedSnippets: StateFlow<List<SharedSnippet>>,
     syncComposer: (ComposerState) -> Unit,
     flushComposer: (ComposerState) -> Unit,
     focusRequested: Flow<Unit>,
+    isHidden: () -> Boolean,
 ) {
     val keyboard = LocalSoftwareKeyboardController.current
     val windowInfo = LocalWindowInfo.current
     val sync by rememberUpdatedState(syncComposer)
     val flush by rememberUpdatedState(flushComposer)
+    val hidden by rememberUpdatedState(isHidden)
 
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { flush(composer) }
     LaunchedEffect(composer, sharedSnippets) {
@@ -205,6 +224,8 @@ private fun ComposerEffects(
         focusRequested.collect {
             // The IME ignores show requests until the window has focus (cold start).
             snapshotFlow { windowInfo.isWindowFocused }.first { it }
+            // The field is not composed while selecting; a detached FocusRequester would throw.
+            if (hidden()) return@collect
             composer.focusRequester.requestFocus()
             keyboard?.show()
         }
@@ -234,7 +255,8 @@ private fun TopBar(
 @Composable
 private fun StreamList(
     state: StreamUiState,
-    onOpenNote: (String) -> Unit,
+    onTap: (String) -> Unit,
+    onLongPress: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val today = remember { LocalDate.now() }
@@ -245,11 +267,19 @@ private fun StreamList(
     ) {
         if (state.pinned.isNotEmpty()) {
             item(key = "pinned-header") { SectionHeader("ピン留め ${state.pinned.size}件") }
-            items(state.pinned, key = { it.id }) { NoteCard(it, state.labelNames, { onOpenNote(it.id) }) }
+            items(state.pinned, key = { it.id }) { note ->
+                NoteCard(note, state.labelNames, { onTap(note.id) }, selected = note.id in state.selection) {
+                    onLongPress(note.id)
+                }
+            }
         }
         state.sections.forEach { section ->
             item(key = "day-${section.date}") { SectionHeader(dayHeader(section.date, today)) }
-            items(section.notes, key = { it.id }) { NoteCard(it, state.labelNames, { onOpenNote(it.id) }) }
+            items(section.notes, key = { it.id }) { note ->
+                NoteCard(note, state.labelNames, { onTap(note.id) }, selected = note.id in state.selection) {
+                    onLongPress(note.id)
+                }
+            }
         }
     }
 }

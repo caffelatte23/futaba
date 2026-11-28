@@ -8,7 +8,11 @@ import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
 import io.github.caffelatte23.futaba.core.data.NoteRepository
 import io.github.caffelatte23.futaba.core.data.UndoBus
+import io.github.caffelatte23.futaba.core.model.Label
 import io.github.caffelatte23.futaba.core.model.Note
+import io.github.caffelatte23.futaba.feature.labels.LabelSheetSession
+import io.github.caffelatte23.futaba.feature.labels.LabelSheetUi
+import io.github.caffelatte23.futaba.feature.labels.labelChecks
 import io.github.caffelatte23.futaba.feature.stream.LabelNames
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
@@ -35,8 +39,10 @@ sealed interface DetailEvent {
 data class DetailUiState(
     val note: Note? = null,
     val labelNames: LabelNames = LabelNames(emptyMap()),
+    val labels: List<Label> = emptyList(),
     /** False until the note has been read once; the editor stays disabled and its callbacks are ignored. */
     val ready: Boolean = false,
+    val sheet: LabelSheetUi? = null,
 )
 
 private const val AUTOSAVE_DELAY_MS = 500L
@@ -61,9 +67,20 @@ class DetailViewModel
         val events: Flow<DetailEvent> = eventChannel.receiveAsFlow()
         private val ready = MutableStateFlow(false)
 
+        /** The label sheet for this note; its baseline is the note's current labels. */
+        val labelSheet =
+            LabelSheetSession(
+                scope = viewModelScope,
+                createLabel = repo::createLabel,
+                baseline = { labelChecks(listOfNotNull(state.value.note), state.value.labels) },
+                commit = { add, remove -> repo.setLabels(listOf(noteId), add, remove) },
+            )
+
         val state: StateFlow<DetailUiState> =
-            combine(noteFlow, repo.labels, ready) { note, labels, isReady ->
-                DetailUiState(note, LabelNames(labels.associate { it.id to it.name }), isReady)
+            combine(noteFlow, repo.labels, ready, labelSheet.state) { note, labels, isReady, sheet ->
+                // The sheet belongs to the note: if it disappears, drop the session so it cannot return stale.
+                if (note == null && sheet != null) labelSheet.reset()
+                DetailUiState(note, LabelNames(labels.associate { it.id to it.name }), labels, isReady, sheet)
             }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), DetailUiState())
 
         /** The editor's authoritative text; may be blank. Only meaningful once ready. */
@@ -106,6 +123,12 @@ class DetailViewModel
             text = fieldText
             autosave?.cancel()
             write()
+        }
+
+        /** Screen stopped: saves the editor and discards the label sheet so stale choices cannot outlive it. */
+        fun onScreenStop(fieldText: String?) {
+            flush(fieldText)
+            labelSheet.reset()
         }
 
         /** Leaving the screen: saves [fieldText], or soft-deletes the note when it was cleared. True when deleted. */

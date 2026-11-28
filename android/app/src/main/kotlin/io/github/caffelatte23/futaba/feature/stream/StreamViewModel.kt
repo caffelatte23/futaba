@@ -23,6 +23,9 @@ import io.github.caffelatte23.futaba.core.model.Note
 import io.github.caffelatte23.futaba.core.model.NoteFilter
 import io.github.caffelatte23.futaba.di.ApplicationScope
 import io.github.caffelatte23.futaba.di.CurrentUid
+import io.github.caffelatte23.futaba.feature.labels.LabelSheetSession
+import io.github.caffelatte23.futaba.feature.labels.LabelSheetUi
+import io.github.caffelatte23.futaba.feature.labels.labelChecks
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.delay
@@ -32,6 +35,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
@@ -74,6 +78,15 @@ data class StreamUiState(
     val filterMissing: Boolean = false,
     /** Label view only: labels loaded (signed in) and the label exists, so notes may be sent here. */
     val labelViewReady: Boolean = false,
+    /** Ids of the selected notes (selection mode while non-empty); only notes still shown. */
+    val selection: Set<String> = emptySet(),
+    val selectedNotes: List<Note> = emptyList(),
+    /** The open label sheet, if any; ends with the selection. */
+    val sheet: LabelSheetUi? = null,
+    /** All labels in `order`, for the label sheet. */
+    val labels: List<Label> = emptyList(),
+    /** False while only the placeholder empty list has been seen (selection is not pruned then). */
+    val notesLoaded: Boolean = false,
 )
 
 private const val DRAFT_SAVE_DELAY_MS = 300L
@@ -107,6 +120,13 @@ class StreamViewModel
         val sharedSnippets = drafts.sharedSnippets
 
         init {
+            // A different account must not inherit the previous one's selection or staged label edits.
+            viewModelScope.launch {
+                uid.drop(1).collect {
+                    selected.value = emptySet()
+                    labelSheet.reset()
+                }
+            }
             viewModelScope.launch {
                 draft.value = drafts.latestIntent.value?.text ?: prefs.draft.first().let { saved ->
                     // A different ViewModel can register an intent while the disk read is suspended.
@@ -121,8 +141,9 @@ class StreamViewModel
             }
         }
 
-        // Start with empty lists so the composer never waits for Firestore's first emission.
-        private val notesOrEmpty = repo.notes.onStart { emit(emptyList()) }
+        // Start with an empty placeholder so the composer never waits for Firestore's first emission;
+        // only emissions flagged true are real data (the placeholder must not prune the selection).
+        private val notesOrEmpty = repo.notes.map { it to true }.onStart { emit(emptyList<Note>() to false) }
 
         // Labels count as loaded only for a signed-in user, after an emission for that user.
         @OptIn(ExperimentalCoroutinesApi::class)
@@ -135,8 +156,27 @@ class StreamViewModel
                 }
             }
 
-        val state: StateFlow<StreamUiState> =
-            combine(notesOrEmpty, labelsOrEmpty, draft, uid, loaded) { all, (labels, labelsLoaded), text, id, ready ->
+        private val selected = MutableStateFlow<Set<String>>(emptySet())
+
+        /** The label sheet over the selection; its baseline is always the current selection and labels. */
+        val labelSheet =
+            LabelSheetSession(
+                scope = viewModelScope,
+                createLabel = repo::createLabel,
+                baseline = { labelChecks(state.value.selectedNotes, state.value.labels) },
+                commit = ::applyLabels,
+                targetsReady = { state.value.notesLoaded },
+            )
+
+        private val baseState: Flow<StreamUiState> =
+            combine(
+                notesOrEmpty,
+                labelsOrEmpty,
+                draft,
+                uid,
+                loaded,
+            ) { notesPair, (labels, labelsLoaded), text, id, ready ->
+                val (all, notesLoaded) = notesPair
                 val shown = filterNotes(all, filter)
                 val usage = labelUsage(all)
                 val labelViewReady = labelsLoaded && labels.any { (filter as? NoteFilter.ByLabel)?.labelId == it.id }
@@ -156,8 +196,64 @@ class StreamViewModel
                     drawerLabels = drawerLabels(labels, usage),
                     filterMissing = labelsLoaded && filter is NoteFilter.ByLabel && !labelViewReady,
                     labelViewReady = labelViewReady,
+                    labels = labels.sortedBy(Label::order),
+                    notesLoaded = notesLoaded,
+                )
+            }
+
+        // Selection is cut down to the notes still shown, so deleted or moved notes drop out by themselves.
+        val state: StateFlow<StreamUiState> =
+            combine(baseState, selected, labelSheet.state) { base, picked, sheet ->
+                val notes = (base.pinned + base.sections.flatMap(DaySection::notes)).filter { it.id in picked }
+                if (!base.notesLoaded) {
+                    // Placeholder emission (e.g. after a resubscribe): keep selection and sheet untouched.
+                    return@combine base.copy(selection = picked, sheet = sheet)
+                }
+                // Stored ids are cut to what is shown, so a note that vanishes and returns is not re-selected.
+                if (notes.size != picked.size) selected.value = notes.mapTo(LinkedHashSet(), Note::id)
+                if (notes.isEmpty()) labelSheet.reset()
+                base.copy(
+                    selection = notes.mapTo(LinkedHashSet(), Note::id),
+                    selectedNotes = notes,
+                    sheet = sheet.takeIf { notes.isNotEmpty() },
                 )
             }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), StreamUiState())
+
+        fun toggleSelect(id: String) {
+            val now = state.value.selection
+            selected.value = if (id in now) now - id else now + id
+        }
+
+        fun clearSelection() {
+            selected.value = emptySet()
+        }
+
+        /** One `setLabels` for the whole selection, then leaves selection mode. */
+        fun applyLabels(
+            add: List<String>,
+            remove: List<String>,
+        ) {
+            val ids = state.value.selection.toList()
+            if (ids.isNotEmpty() && (add.isNotEmpty() || remove.isNotEmpty())) repo.setLabels(ids, add, remove)
+            clearSelection()
+        }
+
+        fun deleteSelected() {
+            val ids = state.value.selection.toList()
+            if (ids.isNotEmpty()) {
+                repo.delete(ids)
+                undoBus.postDeleted(ids)
+            }
+            clearSelection()
+        }
+
+        /** Unpins when every selected note is pinned, otherwise pins them all. */
+        fun pinSelected() {
+            val notes = state.value.selectedNotes
+            val pin = !notes.all(Note::pinned)
+            notes.forEach { repo.setPinned(it.id, pin) }
+            clearSelection()
+        }
 
         /** Emits when a newer focus request arrives (and was not already served by another screen). */
         val focusRequested: Flow<Unit> =

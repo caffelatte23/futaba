@@ -29,6 +29,15 @@ class FakeNoteRepository(
     override val labels: Flow<List<Label>> = labelState.map { it.sortedBy(Label::order) }
     override val pendingWrites: Flow<Int> = flowOf(0)
 
+    /** Every `setLabels` call, in order, so tests can assert a bulk edit is one call. */
+    val setLabelsCalls = mutableListOf<SetLabelsCall>()
+
+    data class SetLabelsCall(
+        val ids: List<String>,
+        val add: List<String>,
+        val remove: List<String>,
+    )
+
     private fun isKnown(labelId: String) = labelState.value.any { it.id == labelId }
 
     private fun newId() = "id${nextId++}"
@@ -69,7 +78,7 @@ class FakeNoteRepository(
         ids: List<String>,
         add: List<String>,
         remove: List<String>,
-    ) = mapNotes(ids) { n ->
+    ) = mapNotes(ids.also { setLabelsCalls += SetLabelsCall(ids, add, remove) }) { n ->
         n.copy(
             labelIds =
                 (n.labelIds + add)

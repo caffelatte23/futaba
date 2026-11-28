@@ -18,10 +18,14 @@ import io.github.caffelatte23.futaba.core.domain.suggestLabels
 import io.github.caffelatte23.futaba.core.model.Label
 import io.github.caffelatte23.futaba.core.model.Note
 import io.github.caffelatte23.futaba.core.model.NoteFilter
+import io.github.caffelatte23.futaba.feature.labels.LabelCheck
+import io.github.caffelatte23.futaba.feature.labels.labelChanges
+import io.github.caffelatte23.futaba.feature.labels.labelChecks
 import io.github.caffelatte23.futaba.testing.FakeNoteRepository
 import io.github.caffelatte23.futaba.testing.MainDispatcherRule
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -35,10 +39,12 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
 import org.junit.Rule
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@Suppress("LargeClass") // one test class per ViewModel
 class StreamViewModelTest {
     @get:Rule val main = MainDispatcherRule()
 
@@ -73,7 +79,9 @@ class StreamViewModelTest {
     private fun vm(
         filter: NoteFilter = NoteFilter.All,
         appScope: CoroutineScope = CoroutineScope(main.dispatcher),
-    ) = StreamViewModel(repo, prefs, drafts, uid, appScope, UndoBus(), focus, filter)
+        undo: UndoBus = UndoBus(),
+        repository: NoteRepository = repo,
+    ) = StreamViewModel(repository, prefs, drafts, uid, appScope, undo, focus, filter)
 
     @Test
     fun switchingFilterKeepsDraft() =
@@ -518,6 +526,348 @@ class StreamViewModelTest {
             assertThat(notReady.textIfReady()).isNull()
             assertThat(prefs.draft.first()).isEqualTo("saved")
             assertThat(ComposerState("x", enabled = true).textIfReady()).isEqualTo("x")
+        }
+
+    @Test
+    fun applyLabelsToSelection() =
+        runTest {
+            val a = repo.add("a")
+            val b = repo.add("b")
+            val l1 = repo.createLabel("l1")
+            val vm = vm()
+            vm.state.test {
+                vm.toggleSelect(a)
+                vm.toggleSelect(b)
+                assertThat(expectMostRecentItem().selection).containsExactly(a, b)
+                vm.applyLabels(listOf(l1), emptyList())
+                val call = repo.setLabelsCalls.single()
+                assertThat(call.ids).containsExactly(a, b)
+                assertThat(call.add).containsExactly(l1)
+                assertThat(call.remove).isEmpty()
+                val s = expectMostRecentItem()
+                assertThat(s.selection).isEmpty()
+                assertThat(s.sections.flatMap { it.notes }.map { it.labelIds }).containsExactly(listOf(l1), listOf(l1))
+            }
+        }
+
+    @Test
+    fun pinToggleUnpinsWhenAllPinned() =
+        runTest {
+            val a = repo.add("a")
+            val b = repo.add("b")
+            repo.setPinned(a, true)
+            val vm = vm()
+            vm.state.test {
+                vm.toggleSelect(a)
+                vm.toggleSelect(b)
+                expectMostRecentItem()
+                vm.pinSelected() // mixed -> pin all
+                assertThat(expectMostRecentItem().pinned.map { it.id }).containsExactly(a, b)
+                vm.toggleSelect(a)
+                vm.toggleSelect(b)
+                expectMostRecentItem()
+                vm.pinSelected() // all pinned -> unpin
+                assertThat(expectMostRecentItem().pinned).isEmpty()
+            }
+        }
+
+    @Test
+    fun deleteSelectedPostsUndo() =
+        runTest {
+            val a = repo.add("a")
+            val b = repo.add("b")
+            val undo = UndoBus()
+            val vm = vm(undo = undo)
+            vm.state.test {
+                vm.toggleSelect(a)
+                vm.toggleSelect(b)
+                expectMostRecentItem()
+                vm.deleteSelected()
+                val s = expectMostRecentItem()
+                assertThat(s.selection).isEmpty()
+                assertThat(s.count).isEqualTo(0)
+                assertThat(undo.pending.value!!.ids).containsExactly(a, b)
+            }
+        }
+
+    @Test
+    fun labelChangesAreDiffedAgainstBaseline() {
+        val a = Note("a", "a", listOf("x", "y"), false, java.time.Instant.EPOCH, java.time.Instant.EPOCH, null)
+        val b = a.copy(id = "b", labelIds = listOf("x"))
+        val labels = listOf("x", "y", "z").mapIndexed { i, id -> Label(id, id, "", i) }
+        val base = labelChecks(listOf(a, b), labels)
+        assertThat(base).containsExactly("x", LabelCheck.All, "y", LabelCheck.Some, "z", LabelCheck.None)
+        val overrides = mapOf("y" to LabelCheck.All, "x" to LabelCheck.None, "z" to LabelCheck.None)
+        assertThat(labelChanges(overrides, base)).isEqualTo(listOf("y") to listOf("x"))
+    }
+
+    private fun current(s: StreamUiState) = labelChecks(s.selectedNotes, s.labels)
+
+    @Test
+    fun restoredNoteDoesNotReenterSelection() =
+        runTest {
+            val a = repo.add("a")
+            repo.add("b")
+            val vm = vm()
+            vm.state.test {
+                vm.toggleSelect(a)
+                assertThat(expectMostRecentItem().selection).containsExactly(a)
+                repo.delete(listOf(a))
+                assertThat(expectMostRecentItem().selection).isEmpty()
+                repo.restore(listOf(a))
+                assertThat(expectMostRecentItem().selection).isEmpty()
+            }
+        }
+
+    @Test
+    fun sheetClosesWhenSelectionEmpties() =
+        runTest {
+            val a = repo.add("a")
+            val vm = vm()
+            vm.state.test {
+                vm.toggleSelect(a)
+                vm.labelSheet.open()
+                assertThat(expectMostRecentItem().sheet).isNotNull()
+                repo.delete(listOf(a))
+                assertThat(expectMostRecentItem().sheet).isNull()
+                repo.restore(listOf(a))
+                vm.toggleSelect(a)
+                assertThat(expectMostRecentItem().sheet).isNull() // a new selection does not revive the old sheet
+            }
+        }
+
+    @Test
+    fun lateLabelReflectsCurrentMembership() =
+        runTest {
+            val a = repo.add("a")
+            val vm = vm()
+            vm.state.test {
+                vm.toggleSelect(a)
+                vm.labelSheet.open()
+                expectMostRecentItem()
+                val l = repo.createLabel("late") // arrives after the sheet opened
+                repo.setLabels(listOf(a), listOf(l), emptyList())
+                val s = expectMostRecentItem()
+                assertThat(current(s)[l]).isEqualTo(LabelCheck.All)
+                assertThat(s.sheet!!.overrides).isEmpty()
+                repo.setLabelsCalls.clear()
+                vm.labelSheet.finish() // untouched: nothing to write
+                assertThat(repo.setLabelsCalls).isEmpty()
+                vm.toggleSelect(a)
+                vm.toggleSelect(a)
+                vm.labelSheet.open()
+                vm.labelSheet.toggle(l, LabelCheck.All)
+                vm.labelSheet.finish()
+                assertThat(repo.setLabelsCalls.single().remove).containsExactly(l)
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    private fun failingCreate(
+        gate: CompletableDeferred<Unit>? = null,
+        fail: Boolean = false,
+    ) = object : NoteRepository by repo {
+        override suspend fun createLabel(
+            name: String,
+            reuseExisting: Boolean,
+        ): String {
+            gate?.await()
+            check(!fail) { "signed out" }
+            return repo.createLabel(name, reuseExisting)
+        }
+    }
+
+    @Test
+    fun createWhileSignedOutShowsErrorAndKeepsQuery() =
+        runTest {
+            val a = repo.add("a")
+            val vm = vm(repository = failingCreate(fail = true))
+            vm.state.test {
+                vm.toggleSelect(a)
+                vm.labelSheet.open()
+                vm.labelSheet.setQuery("idea")
+                vm.labelSheet.create("idea")
+                val sheet = expectMostRecentItem().sheet!!
+                assertThat(sheet.createFailed).isTrue()
+                assertThat(sheet.query).isEqualTo("idea")
+                assertThat(sheet.creating).isFalse()
+            }
+        }
+
+    @Test
+    fun dismissBlockedWhileCreating() =
+        runTest {
+            val a = repo.add("a")
+            val gate = CompletableDeferred<Unit>()
+            val vm = vm(repository = failingCreate(gate))
+            vm.state.test {
+                vm.toggleSelect(a)
+                vm.labelSheet.open()
+                vm.labelSheet.create("new")
+                vm.labelSheet.finish() // scrim tap / 完了 / Back while the create is suspended
+                vm.labelSheet.cancel()
+                runCurrent()
+                assertThat(vm.labelSheet.state.value).isNotNull()
+                assertThat(repo.setLabelsCalls).isEmpty()
+                gate.complete(Unit)
+                runCurrent()
+                vm.labelSheet.finish() // create done: the new label is staged, finish attaches it
+                val id =
+                    repo.labels
+                        .first()
+                        .single { it.name == "new" }
+                        .id
+                val call = repo.setLabelsCalls.single()
+                assertThat(call.ids).containsExactly(a)
+                assertThat(call.add).containsExactly(id)
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun dismissDuringReloadKeepsSheetAndChanges() =
+        runTest {
+            val a = repo.add("a")
+            val l = repo.createLabel("l")
+            repo.setLabels(listOf(a), listOf(l), emptyList())
+            repo.setLabelsCalls.clear()
+            var hold: CompletableDeferred<Unit>? = null
+            val slow =
+                object : NoteRepository by repo {
+                    override val notes: Flow<List<Note>> =
+                        flow {
+                            hold?.await()
+                            emitAll(repo.notes)
+                        }
+                }
+            val vm = vm(repository = slow)
+            vm.state.test {
+                vm.toggleSelect(a)
+                vm.labelSheet.open()
+                vm.labelSheet.toggle(l, LabelCheck.All) // stage removal of l
+                expectMostRecentItem()
+                cancelAndIgnoreRemainingEvents()
+            }
+            hold = CompletableDeferred()
+            advanceTimeBy(6_000)
+            runCurrent()
+            vm.state.test {
+                runCurrent() // placeholder: targets are empty
+                assertThat(vm.state.value.notesLoaded).isFalse()
+                assertThat(vm.labelSheet.canClose()).isFalse()
+                vm.labelSheet.finish()
+                vm.labelSheet.cancel()
+                runCurrent()
+                assertThat(
+                    vm.labelSheet.state.value
+                        ?.overrides,
+                ).containsExactly(l, LabelCheck.None)
+                assertThat(repo.setLabelsCalls).isEmpty()
+                hold.complete(Unit)
+                runCurrent()
+                assertThat(vm.state.value.notesLoaded).isTrue()
+                assertThat(vm.labelSheet.canClose()).isTrue()
+                vm.labelSheet.finish()
+                runCurrent()
+                val call = repo.setLabelsCalls.single()
+                assertThat(call.ids).containsExactly(a)
+                assertThat(call.add).isEmpty()
+                assertThat(call.remove).containsExactly(l)
+                cancelAndIgnoreRemainingEvents()
+            }
+        }
+
+    @Test
+    fun cancelDiscardsStagedChanges() =
+        runTest {
+            val a = repo.add("a")
+            val l = repo.createLabel("l")
+            val vm = vm()
+            vm.state.test {
+                vm.toggleSelect(a)
+                vm.labelSheet.open()
+                vm.labelSheet.toggle(l, LabelCheck.None)
+                vm.labelSheet.cancel()
+                val s = expectMostRecentItem()
+                assertThat(s.sheet).isNull()
+                assertThat(s.selection).containsExactly(a)
+                assertThat(repo.setLabelsCalls).isEmpty()
+            }
+        }
+
+    @Test
+    fun canCloseFalseImmediatelyAfterCreateStarts() =
+        runTest {
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            val a = repo.add("a")
+            val l = repo.createLabel("l")
+            val gate = CompletableDeferred<Unit>()
+            val vm = vm(repository = failingCreate(gate, fail = true))
+            vm.state.test {
+                runCurrent()
+                vm.toggleSelect(a)
+                vm.labelSheet.open()
+                vm.labelSheet.toggle(l, LabelCheck.None) // another staged change
+                vm.labelSheet.setQuery("new")
+                runCurrent()
+                assertThat(vm.labelSheet.canClose()).isTrue()
+                vm.labelSheet.create("new")
+                assertThat(
+                    vm.state.value.sheet
+                        ?.creating,
+                ).isFalse()
+                assertThat(vm.labelSheet.canClose()).isFalse()
+                vm.labelSheet.finish() // the dispatcher has not run the create yet
+                vm.labelSheet.cancel()
+                gate.complete(Unit)
+                runCurrent()
+                val s = expectMostRecentItem()
+                assertThat(s.sheet).isNotNull()
+                assertThat(s.sheet!!.createFailed).isTrue()
+                assertThat(s.sheet.query).isEqualTo("new")
+                assertThat(s.sheet.overrides).containsExactly(l, LabelCheck.All)
+                assertThat(s.selection).containsExactly(a)
+                assertThat(repo.setLabelsCalls).isEmpty()
+                assertThat(vm.labelSheet.canClose()).isTrue()
+                vm.labelSheet.finish()
+                val call = repo.setLabelsCalls.single()
+                assertThat(call.ids).containsExactly(a)
+                assertThat(call.add).containsExactly(l)
+                assertThat(call.remove).isEmpty()
+            }
+        }
+
+    @Test
+    fun placeholderEmptyListDoesNotClearSelection() =
+        runTest {
+            val a = repo.add("a")
+            var hold: CompletableDeferred<Unit>? = null
+            val slow =
+                object : NoteRepository by repo {
+                    override val notes: Flow<List<Note>> =
+                        flow {
+                            hold?.await() // Firestore's snapshot arrives late after a resubscribe
+                            emitAll(repo.notes)
+                        }
+                }
+            val vm = vm(repository = slow)
+            vm.state.test {
+                vm.toggleSelect(a)
+                vm.labelSheet.open()
+                assertThat(expectMostRecentItem().selection).containsExactly(a)
+                cancelAndIgnoreRemainingEvents()
+            }
+            hold = CompletableDeferred()
+            advanceTimeBy(6_000) // subscription timeout: upstream stops
+            runCurrent()
+            vm.state.test {
+                runCurrent() // placeholder emission, real snapshot still pending
+                hold.complete(Unit)
+                runCurrent()
+                cancelAndIgnoreRemainingEvents()
+            }
+            assertThat(vm.state.value.selection).containsExactly(a)
+            assertThat(vm.labelSheet.state.value).isNotNull()
         }
 }
 

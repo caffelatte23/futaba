@@ -53,6 +53,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.caffelatte23.futaba.R
 import io.github.caffelatte23.futaba.core.designsystem.timestampStyle
 import io.github.caffelatte23.futaba.core.model.Note
+import io.github.caffelatte23.futaba.feature.labels.LabelSheet
+import io.github.caffelatte23.futaba.feature.labels.LabelSheetContent
 import io.github.caffelatte23.futaba.feature.stream.LabelChip
 import io.github.caffelatte23.futaba.feature.stream.LabelNames
 import kotlinx.coroutines.flow.drop
@@ -76,7 +78,7 @@ fun DetailScreen(
     }
 
     BackHandler(onBack = leave)
-    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.flush(editor.textIfSeeded()) }
+    LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.onScreenStop(editor.textIfSeeded()) }
     val currentOnBack by rememberUpdatedState(onBack)
     LaunchedEffect(viewModel) { viewModel.events.collect { currentOnBack() } }
     LaunchedEffect(field) {
@@ -98,7 +100,10 @@ fun DetailScreen(
             onDelete = { viewModel.delete(editor.textIfSeeded()) },
         )
         if (note != null && state.ready) {
-            DetailBody(note, field, state.labelNames, Modifier.weight(1f))
+            DetailBody(note, field, state.labelNames, viewModel.labelSheet::open, Modifier.weight(1f))
+            state.sheet?.let {
+                LabelSheet(LabelSheetContent(listOf(note), state.labels), it, viewModel.labelSheet)
+            }
         }
     }
 }
@@ -183,6 +188,7 @@ private fun DetailBody(
     note: Note,
     field: TextFieldState,
     labelNames: LabelNames,
+    onAddLabel: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(modifier.padding(horizontal = 20.dp, vertical = 8.dp)) {
@@ -202,8 +208,7 @@ private fun DetailBody(
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             note.labelIds.mapNotNull(labelNames.byId::get).forEach { LabelChip(it) }
-            // TODO(Task 11): open the label sheet.
-            AddLabelChip(onClick = {})
+            AddLabelChip(onClick = onAddLabel)
         }
     }
 }

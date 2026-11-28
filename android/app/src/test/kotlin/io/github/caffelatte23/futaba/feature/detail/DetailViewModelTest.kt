@@ -4,12 +4,14 @@ import com.google.common.truth.Truth.assertThat
 import io.github.caffelatte23.futaba.core.data.NoteRepository
 import io.github.caffelatte23.futaba.core.data.UndoBus
 import io.github.caffelatte23.futaba.core.model.Note
+import io.github.caffelatte23.futaba.feature.labels.LabelCheck
 import io.github.caffelatte23.futaba.testing.FakeNoteRepository
 import io.github.caffelatte23.futaba.testing.MainDispatcherRule
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -205,4 +207,49 @@ class DetailViewModelTest {
         assertThat(detailHeader(created, Instant.parse("2026-11-25T12:52:30Z"), utc))
             .isEqualTo("2026/11/25 12:40 · 12:52 編集")
     }
+
+    @Test
+    fun detailSessionResetsWhenNoteDisappears() =
+        runTest {
+            val id = fake.add("a")
+            val l = fake.createLabel("l")
+            val all = MutableStateFlow(fake.notes.first())
+            val shown =
+                object : NoteRepository by fake {
+                    override val notes: Flow<List<Note>> = all
+                }
+            val vm = DetailViewModel(shown, bus, id)
+            backgroundScope.launch { vm.state.collect {} }
+            runCurrent()
+            vm.labelSheet.open()
+            vm.labelSheet.toggle(l, LabelCheck.All)
+            runCurrent()
+            assertThat(
+                vm.state.value.sheet!!
+                    .overrides,
+            ).isNotEmpty()
+            val before = all.value
+            all.value = emptyList()
+            runCurrent()
+            all.value = before
+            runCurrent()
+            assertThat(vm.state.value.sheet).isNull()
+        }
+
+    @Test
+    fun detailSessionDiscardedOnStop() =
+        runTest {
+            val id = fake.add("a")
+            val l = fake.createLabel("l")
+            val vm = DetailViewModel(fake, bus, id)
+            backgroundScope.launch { vm.state.collect {} }
+            runCurrent()
+            vm.labelSheet.open()
+            vm.labelSheet.toggle(l, LabelCheck.All)
+            runCurrent()
+            assertThat(vm.state.value.sheet).isNotNull()
+            vm.onScreenStop(null)
+            runCurrent()
+            assertThat(vm.state.value.sheet).isNull()
+        }
 }
