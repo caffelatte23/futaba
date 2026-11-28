@@ -60,9 +60,10 @@ class AuthRepository
         val uid: StateFlow<String?> = _uid
         private val _account = MutableStateFlow(auth.currentUser?.toAccount())
         val account: StateFlow<AuthAccount?> = _account
+        private val _signedIn = MutableStateFlow(auth.currentUser.isGoogleUser())
 
-        val isAnonymous: Boolean get() = auth.currentUser?.isAnonymous ?: false
-        val email: String? get() = auth.currentUser?.email
+        /** True for a non-anonymous user. Seeded synchronously from the persisted user, so no waiting UI is needed. */
+        val signedIn: StateFlow<Boolean> = _signedIn
 
         init {
             auth.addAuthStateListener { publishUser() }
@@ -72,36 +73,40 @@ class AuthRepository
             val user = auth.currentUser
             _uid.value = user?.uid
             _account.value = user?.toAccount()
+            _signedIn.value = user.isGoogleUser()
         }
 
         @Suppress("TooGenericExceptionCaught") // Credentials and Firebase expose different failure types.
-        suspend fun linkGoogle(context: Context): LinkResult =
+        suspend fun signInWithGoogle(context: Context): LinkResult =
             try {
-                linkGoogleCredential(getGoogleCredential(context)) { getGoogleCredential(context) }
+                signInGoogleCredential(getGoogleCredential(context)) { getGoogleCredential(context) }
             } catch (_: GetCredentialCancellationException) {
                 LinkResult.Cancelled
             } catch (_: NoCredentialException) {
-                LinkResult.Failed(context.getString(R.string.settings_no_google_account))
+                LinkResult.Failed(context.getString(R.string.login_no_google_account))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Log.w(TAG, "Google linking failed", e)
-                LinkResult.Failed(context.getString(R.string.settings_sync_failed))
+                Log.w(TAG, "Google sign-in failed", e)
+                LinkResult.Failed(context.getString(R.string.login_failed))
             }
 
         private val googleMigration = GoogleAccountMigration(auth, firestore)
 
-        internal suspend fun linkGoogleCredential(
+        /** Links when an anonymous (v1) user exists so its notes carry over; otherwise a plain sign-in. */
+        internal suspend fun signInGoogleCredential(
             credential: AuthCredential,
             migration: GoogleAccountMigration = googleMigration,
             refreshCredential: (suspend () -> AuthCredential)? = null,
         ): LinkResult =
             signInLock.withLock {
                 try {
-                    ensureSignedInLocked()
-                    val user = checkNotNull(auth.currentUser)
-                    check(user.isAnonymous)
-                    linkOrMerge(user, credential, migration, refreshCredential)
+                    val user = auth.currentUser
+                    if (user?.isAnonymous == true) {
+                        linkOrMerge(user, credential, migration, refreshCredential)
+                    } else {
+                        signInPlain(credential)
+                    }
                 } finally {
                     publishUser()
                 }
@@ -120,47 +125,29 @@ class AuthRepository
                     LinkResult.Linked
                 } else {
                     Log.w(TAG, "Google linking timed out")
-                    LinkResult.Failed(auth.app.applicationContext.getString(R.string.settings_sync_failed))
+                    LinkResult.Failed(auth.app.applicationContext.getString(R.string.login_failed))
                 }
             } catch (_: FirebaseAuthUserCollisionException) {
                 migration.merge(user, credential, refreshCredential)
             }
 
-        suspend fun signOut(): Boolean =
-            signInLock.withLock {
-                auth.signOut()
-                publishUser()
-                val uid = ensureSignedInLocked()
-                publishUser()
-                uid != null
+        @Suppress("RedundantSuspendModifier") // Google Tasks await() suspends.
+        private suspend fun signInPlain(credential: AuthCredential): LinkResult =
+            if (withTimeoutOrNull(LINK_TIMEOUT_MS) { auth.signInWithCredential(credential).await() } != null) {
+                LinkResult.Linked
+            } else {
+                Log.w(TAG, "Google sign-in timed out")
+                LinkResult.Failed(auth.app.applicationContext.getString(R.string.login_failed))
             }
 
-        /**
-         * Returns the current uid, signing in anonymously if needed; null when that fails (e.g. offline).
-         * Suppressions: Firebase throws varied exceptions (any failure means "no uid yet");
-         * detekt wrongly flags suspend.
-         */
-        suspend fun ensureSignedIn(): String? =
-            auth.currentUser?.uid ?: signInLock.withLock {
-                ensureSignedInLocked()
-            }
-
-        private suspend fun ensureSignedInLocked(): String? = auth.currentUser?.uid ?: signInAnonymously()
-
-        @Suppress("TooGenericExceptionCaught", "RedundantSuspendModifier") // see ensureSignedIn
-        private suspend fun signInAnonymously(): String? =
-            try {
-                auth
-                    .signInAnonymously()
-                    .await()
-                    .user
-                    ?.uid
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                null
-            }
+        /** Signs out only; never creates an anonymous user. The account's notes stay on the server. */
+        fun signOut() {
+            auth.signOut()
+            publishUser()
+        }
     }
+
+private fun FirebaseUser?.isGoogleUser() = this != null && !isAnonymous
 
 private fun FirebaseUser.toAccount() = AuthAccount(isAnonymous, email)
 
