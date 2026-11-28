@@ -15,7 +15,7 @@ description: Futaba の実装を調整役（Opus）として進めるときの�
 
 1. ブランチを main から作る（Sonnet・文書: リポジトリ本体、Codex: `git worktree add ../futaba-codex`。使い終わった作業フォルダとブランチは削除する。Chrome 拡張は本体の `extension/.output/chrome-mv3` から読み込んでいるので、本体のフォルダは消さない）。
 2. brief を抜き出し、指示に「`futaba-task` を読む」「端末を使うか否か」「触ってよい範囲（並行作業との衝突回避）」を必ず書く。
-3. Codex は `codex exec --dangerously-bypass-approvals-and-sandbox -C <worktree> -o <final.md>` をバックグラウンドで実行し、`-o` のファイルを見張る処理を別に付ける（プロセスが終了しないことがある）。利用上限に達したら時刻を記録し、解除後に再開する。
+3. Codex は `codex exec --dangerously-bypass-approvals-and-sandbox -C <worktree> -o <final.md> "<prompt>" < /dev/null` をバックグラウンドで実行し（`< /dev/null` が無いと stdin 待ちで止まる）、`-o` のファイルを見張る処理を別に付ける（プロセスが終了しないことがある）。利用上限に達したら時刻を記録し、解除後に再開する。
 4. レビュー → CHANGES_REQUESTED なら同じ実装担当に修正（3回まで）、4回目からは別モデルに交代。受け入れる残余リスクは台帳に Ruling として記録し、次のレビューに「再提起しない」と渡す。
 5. リリース前（R8 やビルド設定の変更時も）は、`assembleRelease` をデバッグ鍵で仮署名して実機で起動し `adb logcat -b crash` が空であることを確認する（デバッグ版では出ない R8 の不具合があったため、#51）。
 6. Firestore・端末に関わる変更は、他のエージェントが端末を使っていないときに調整役が `pnpm check:device` を走らせる（instrumentation の衝突・アプリの再インストールで落ちるため直列化）。
