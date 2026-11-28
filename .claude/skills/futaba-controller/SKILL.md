@@ -13,7 +13,7 @@ description: Futaba の実装を調整役（Opus）として進めるときの�
 
 ## 1タスクの流れ
 
-1. ブランチを main から作る（Sonnet: リポジトリ本体、Codex: `../futaba-codex`、文書: `../futaba-docs`）。
+1. ブランチを main から作る（Sonnet・文書: リポジトリ本体、Codex: `git worktree add ../futaba-codex`。使い終わった作業フォルダとブランチは削除する。Chrome 拡張は本体の `extension/.output/chrome-mv3` から読み込んでいるので、本体のフォルダは消さない）。
 2. brief を抜き出し、指示に「`futaba-task` を読む」「端末を使うか否か」「触ってよい範囲（並行作業との衝突回避）」を必ず書く。
 3. Codex は `codex exec --dangerously-bypass-approvals-and-sandbox -C <worktree> -o <final.md>` をバックグラウンドで実行し、`-o` のファイルを見張る処理を別に付ける（プロセスが終了しないことがある）。利用上限に達したら時刻を記録し、解除後に再開する。
 4. レビュー → CHANGES_REQUESTED なら同じ実装担当に修正（3回まで）、4回目からは別モデルに交代。受け入れる残余リスクは台帳に Ruling として記録し、次のレビューに「再提起しない」と渡す。
