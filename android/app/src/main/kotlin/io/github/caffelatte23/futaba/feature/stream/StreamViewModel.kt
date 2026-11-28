@@ -165,7 +165,7 @@ class StreamViewModel
                 createLabel = repo::createLabel,
                 baseline = { labelChecks(state.value.selectedNotes, state.value.labels) },
                 commit = ::applyLabels,
-                ready = { state.value.notesLoaded },
+                targetsReady = { state.value.notesLoaded },
             )
 
         private val baseState: Flow<StreamUiState> =

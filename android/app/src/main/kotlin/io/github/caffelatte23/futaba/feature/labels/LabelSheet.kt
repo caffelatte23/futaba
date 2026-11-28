@@ -1,5 +1,6 @@
 package io.github.caffelatte23.futaba.feature.labels
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -12,6 +13,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ModalBottomSheetProperties
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
@@ -19,13 +21,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TriStateCheckbox
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 
 /**
  * Swipe, scrim and Back apply the staged choices like 完了; キャンセル discards them.
@@ -39,16 +41,27 @@ fun LabelSheet(
     session: LabelSheetSession,
 ) {
     val base = remember(content) { labelChecks(content.targets, content.labels) }
-    // The sheet cannot be swiped or tapped away while a create runs (the session also ignores it).
-    val creating by rememberUpdatedState(ui.creating)
+    val sheetState =
+        rememberModalBottomSheetState(
+            skipPartiallyExpanded = true,
+            confirmValueChange = { it != SheetValue.Hidden || session.canClose() },
+        )
+    val scope = rememberCoroutineScope()
     ModalBottomSheet(
-        onDismissRequest = session::finish,
-        sheetState =
-            rememberModalBottomSheetState(
-                skipPartiallyExpanded = true,
-                confirmValueChange = { it != SheetValue.Hidden || !creating },
-            ),
+        onDismissRequest = {
+            // Only commit a completed hide. If a reload started during the animation, bring the sheet back.
+            if (sheetState.isVisible || sheetState.targetValue != SheetValue.Hidden) return@ModalBottomSheet
+            if (session.canClose()) {
+                session.finish()
+            } else if (session.state.value != null) {
+                scope.launch { sheetState.show() }
+            }
+        },
+        sheetState = sheetState,
+        properties = ModalBottomSheetProperties(shouldDismissOnBackPress = false),
     ) {
+        // Handle Back at the press, before Material's asynchronous hide can outlive a veto.
+        BackHandler(onBack = session::finish)
         Column(
             Modifier.navigationBarsPadding().padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -70,14 +83,9 @@ fun LabelSheet(
             LazyColumn {
                 creatableName(ui.query, content.labels)?.let { name ->
                     item(key = "create") {
-                        Text(
-                            if (ui.creating) "作成中…" else "「$name」を作成",
-                            Modifier
-                                .fillMaxWidth()
-                                .clickable(enabled = !ui.creating) { session.create(name) }
-                                .padding(vertical = 12.dp),
-                            color = MaterialTheme.colorScheme.primary,
-                        )
+                        CreateLabelRow(name, ui.creating) {
+                            if (sheetState.targetValue != SheetValue.Hidden) session.create(name)
+                        }
                     }
                 }
                 items(content.labels.filter { it.name.contains(ui.query.trim(), ignoreCase = true) }, key = { it.id }) {
@@ -87,6 +95,22 @@ fun LabelSheet(
             }
         }
     }
+}
+
+@Composable
+private fun CreateLabelRow(
+    name: String,
+    creating: Boolean,
+    onCreate: () -> Unit,
+) {
+    Text(
+        if (creating) "作成中…" else "「$name」を作成",
+        Modifier
+            .fillMaxWidth()
+            .clickable(enabled = !creating, onClick = onCreate)
+            .padding(vertical = 12.dp),
+        color = MaterialTheme.colorScheme.primary,
+    )
 }
 
 @Composable

@@ -57,7 +57,7 @@ data class LabelSheetUi(
 /**
  * One label-sheet session, owned by a ViewModel so it survives recomposition and ends with the selection.
  * Untouched labels always reflect the targets' current membership; only explicit choices are staged.
- * [finish] and [cancel] are refused while a create runs, so the new label is never left unattached.
+ * User dismissal is refused while a create runs or while the targets are loading.
  */
 @Stable
 class LabelSheetSession(
@@ -65,8 +65,7 @@ class LabelSheetSession(
     private val createLabel: suspend (String) -> String,
     private val baseline: () -> Map<String, LabelCheck>,
     private val commit: (add: List<String>, remove: List<String>) -> Unit,
-    /** False while the targets are not authoritative yet (placeholder data): finishing is refused. */
-    private val ready: () -> Boolean = { true },
+    private val targetsReady: () -> Boolean = { true },
 ) {
     private val ui = MutableStateFlow<LabelSheetUi?>(null)
     val state: StateFlow<LabelSheetUi?> = ui
@@ -83,9 +82,11 @@ class LabelSheetSession(
         ui.value = null
     }
 
-    /** Ignored while a create runs, so its result (or error) is never lost. */
+    /** Reads the current session and target state directly, including before recomposition. */
+    fun canClose(): Boolean = ui.value?.creating == false && targetsReady()
+
     fun cancel() {
-        if (ui.value?.creating != true) reset()
+        if (canClose()) reset()
     }
 
     fun setQuery(query: String) = ui.update { it?.copy(query = query, createFailed = false) }
@@ -102,6 +103,7 @@ class LabelSheetSession(
     @Suppress("TooGenericExceptionCaught", "SwallowedException")
     fun create(name: String) {
         if (ui.value?.creating != false) return
+        // Publish before launch so a dismissal sees the new state even if the coroutine is queued.
         ui.update { it?.copy(creating = true, createFailed = false) }
         pending =
             scope.launch {
@@ -123,7 +125,7 @@ class LabelSheetSession(
      * is running or the targets are still loading, so dismiss gestures cannot drop edits or errors.
      */
     fun finish() {
-        if (ui.value?.creating == false && ready()) applyStaged()
+        if (canClose()) applyStaged()
     }
 
     private fun applyStaged() {

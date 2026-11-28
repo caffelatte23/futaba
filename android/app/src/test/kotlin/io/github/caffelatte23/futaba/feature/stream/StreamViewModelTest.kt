@@ -25,6 +25,7 @@ import io.github.caffelatte23.futaba.testing.FakeNoteRepository
 import io.github.caffelatte23.futaba.testing.MainDispatcherRule
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -38,6 +39,7 @@ import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
 import org.junit.Rule
 import org.junit.Test
 
@@ -665,10 +667,13 @@ class StreamViewModelTest {
         gate: CompletableDeferred<Unit>? = null,
         fail: Boolean = false,
     ) = object : NoteRepository by repo {
-        override suspend fun createLabel(name: String): String {
+        override suspend fun createLabel(
+            name: String,
+            reuseExisting: Boolean,
+        ): String {
             gate?.await()
             check(!fail) { "signed out" }
-            return repo.createLabel(name)
+            return repo.createLabel(name, reuseExisting)
         }
     }
 
@@ -720,7 +725,7 @@ class StreamViewModelTest {
         }
 
     @Test
-    fun finishDisabledWhileNotesLoading() =
+    fun dismissDuringReloadKeepsSheetAndChanges() =
         runTest {
             val a = repo.add("a")
             val l = repo.createLabel("l")
@@ -748,15 +753,26 @@ class StreamViewModelTest {
             runCurrent()
             vm.state.test {
                 runCurrent() // placeholder: targets are empty
+                assertThat(vm.state.value.notesLoaded).isFalse()
+                assertThat(vm.labelSheet.canClose()).isFalse()
                 vm.labelSheet.finish()
+                vm.labelSheet.cancel()
                 runCurrent()
-                assertThat(vm.labelSheet.state.value).isNotNull() // kept, nothing committed
+                assertThat(
+                    vm.labelSheet.state.value
+                        ?.overrides,
+                ).containsExactly(l, LabelCheck.None)
                 assertThat(repo.setLabelsCalls).isEmpty()
                 hold.complete(Unit)
                 runCurrent()
+                assertThat(vm.state.value.notesLoaded).isTrue()
+                assertThat(vm.labelSheet.canClose()).isTrue()
                 vm.labelSheet.finish()
                 runCurrent()
-                assertThat(repo.setLabelsCalls.single().remove).containsExactly(l)
+                val call = repo.setLabelsCalls.single()
+                assertThat(call.ids).containsExactly(a)
+                assertThat(call.add).isEmpty()
+                assertThat(call.remove).containsExactly(l)
                 cancelAndIgnoreRemainingEvents()
             }
         }
@@ -780,27 +796,44 @@ class StreamViewModelTest {
         }
 
     @Test
-    fun failedCreateDuringFinishKeepsSheetAndQuery() =
+    fun canCloseFalseImmediatelyAfterCreateStarts() =
         runTest {
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
             val a = repo.add("a")
             val l = repo.createLabel("l")
             val gate = CompletableDeferred<Unit>()
             val vm = vm(repository = failingCreate(gate, fail = true))
             vm.state.test {
+                runCurrent()
                 vm.toggleSelect(a)
                 vm.labelSheet.open()
                 vm.labelSheet.toggle(l, LabelCheck.None) // another staged change
                 vm.labelSheet.setQuery("new")
+                runCurrent()
+                assertThat(vm.labelSheet.canClose()).isTrue()
                 vm.labelSheet.create("new")
-                vm.labelSheet.finish() // tapped while the create is still suspended
+                assertThat(
+                    vm.state.value.sheet
+                        ?.creating,
+                ).isFalse()
+                assertThat(vm.labelSheet.canClose()).isFalse()
+                vm.labelSheet.finish() // the dispatcher has not run the create yet
+                vm.labelSheet.cancel()
                 gate.complete(Unit)
                 runCurrent()
                 val s = expectMostRecentItem()
                 assertThat(s.sheet).isNotNull()
                 assertThat(s.sheet!!.createFailed).isTrue()
                 assertThat(s.sheet.query).isEqualTo("new")
+                assertThat(s.sheet.overrides).containsExactly(l, LabelCheck.All)
                 assertThat(s.selection).containsExactly(a)
                 assertThat(repo.setLabelsCalls).isEmpty()
+                assertThat(vm.labelSheet.canClose()).isTrue()
+                vm.labelSheet.finish()
+                val call = repo.setLabelsCalls.single()
+                assertThat(call.ids).containsExactly(a)
+                assertThat(call.add).containsExactly(l)
+                assertThat(call.remove).isEmpty()
             }
         }
 
