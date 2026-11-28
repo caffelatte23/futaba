@@ -18,11 +18,11 @@ import androidx.glance.Image
 import androidx.glance.ImageProvider
 import androidx.glance.LocalContext
 import androidx.glance.LocalSize
+import androidx.glance.action.actionStartActivity
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.SizeMode
-import androidx.glance.appwidget.action.actionStartActivity
 import androidx.glance.appwidget.appWidgetBackground
 import androidx.glance.appwidget.provideContent
 import androidx.glance.appwidget.state.updateAppWidgetState
@@ -32,7 +32,7 @@ import androidx.glance.currentState
 import androidx.glance.layout.Alignment
 import androidx.glance.layout.Box
 import androidx.glance.layout.Column
-import androidx.glance.layout.Row
+import androidx.glance.layout.Spacer
 import androidx.glance.layout.fillMaxSize
 import androidx.glance.layout.fillMaxWidth
 import androidx.glance.layout.height
@@ -50,9 +50,11 @@ import io.github.caffelatte23.futaba.core.data.NoteRepository
 import io.github.caffelatte23.futaba.core.designsystem.FutabaWidgetColors
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withTimeoutOrNull
+import androidx.glance.appwidget.action.actionStartActivity as actionStartActivityWithIntent
 
 private val CompactSize = DpSize(40.dp, 40.dp)
 private val WideSize = DpSize(180.dp, 88.dp)
+private val TouchTargetHeight = 48.dp
 private val RefreshVersion = longPreferencesKey("refresh_version")
 private const val NOTES_TIMEOUT_MS = 2_000L
 
@@ -71,10 +73,10 @@ class CaptureWidget : GlanceAppWidget() {
     ) {
         provideContent {
             GlanceTheme(colors = FutabaWidgetColors) {
-                if (LocalSize.current == WideSize) {
-                    RecentIdeasWidget()
-                } else {
+                if (LocalSize.current == CompactSize) {
                     CompactCaptureWidget()
+                } else {
+                    RecentIdeasWidget()
                 }
             }
         }
@@ -92,7 +94,7 @@ class CaptureWidget : GlanceAppWidget() {
 }
 
 private fun captureAction(context: Context) =
-    actionStartActivity(
+    actionStartActivityWithIntent(
         Intent(context, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             .putExtra(EXTRA_FOCUS_COMPOSER, true),
@@ -132,38 +134,40 @@ private fun RecentIdeasWidget(modifier: GlanceModifier = GlanceModifier) {
                 .fillMaxSize()
                 .appWidgetBackground()
                 .background(GlanceTheme.colors.background)
-                .padding(horizontal = 8.dp, vertical = 2.dp),
+                .padding(horizontal = 8.dp),
     ) {
-        Column(GlanceModifier.fillMaxWidth().defaultWeight()) {
+        Column(
+            modifier =
+                GlanceModifier
+                    .fillMaxWidth()
+                    .defaultWeight()
+                    .clickable(actionStartActivity<MainActivity>()),
+        ) {
             val previews = rows
             if (previews?.isEmpty() == true) {
                 Text(
                     text = context.getString(R.string.widget_empty),
+                    modifier = GlanceModifier.padding(vertical = 8.dp),
                     style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 14.sp),
                     maxLines = 1,
                 )
             }
-            previews.orEmpty().forEach { preview ->
-                Row(
-                    modifier =
-                        GlanceModifier
-                            .fillMaxWidth()
-                            .defaultWeight()
-                            .clickable(actionStartActivity(Intent(context, MainActivity::class.java))),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = preview,
-                        style = TextStyle(color = GlanceTheme.colors.onBackground, fontSize = 14.sp),
-                        maxLines = 1,
-                    )
+            previews.orEmpty().forEachIndexed { index, preview ->
+                if (index > 0) {
+                    Spacer(GlanceModifier.height(4.dp))
                 }
+                Text(
+                    text = preview,
+                    modifier = GlanceModifier.fillMaxWidth(),
+                    style = TextStyle(color = GlanceTheme.colors.onBackground, fontSize = 14.sp),
+                    maxLines = 1,
+                )
             }
         }
         Button(
             text = context.getString(R.string.widget_new_idea),
             onClick = captureAction(context),
-            modifier = GlanceModifier.fillMaxWidth().height(32.dp),
+            modifier = GlanceModifier.fillMaxWidth().height(TouchTargetHeight),
             maxLines = 1,
         )
     }
