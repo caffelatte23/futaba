@@ -1,31 +1,152 @@
 :root {
+  color-scheme: dark;
+  --background: #1c1c1c;
+  --input-background: #111111;
+  --text: #ecece6;
+  --muted: #a3a39c;
+  --accent: #f5c95c;
+  --border: color-mix(in srgb, var(--muted) 35%, var(--background));
+  background: var(--background);
+  color: var(--text);
   font:
-    1rem/1.5 'IBM Plex Sans JP',
+    14px/1.5 'IBM Plex Sans JP',
     system-ui,
     sans-serif;
-  color: #161616;
-  background: #f4f4f0;
 }
 
 body {
-  min-inline-size: 16rem;
-  max-inline-size: 22rem;
+  inline-size: 360px;
+  block-size: 440px;
   margin: 0;
-  padding: 1rem;
+}
+
+main {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  block-size: 100%;
+  padding: 0 20px 12px;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+h1,
+p {
+  margin: 0;
+}
+
+.logo-definitions {
+  position: absolute;
+}
+
+.capture-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-block: 14px;
+  border-block-end: 1px solid var(--border);
+  font-size: 20px;
+}
+
+.capture-heading svg {
+  inline-size: 24px;
+  block-size: 24px;
+  color: var(--accent);
+}
+
+#capture {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-block-size: 0;
+}
+
+label {
+  margin-block: 16px 8px;
+  font-weight: 700;
+}
+
+textarea {
+  flex: 1;
+  min-block-size: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--input-background);
+  color: var(--text);
+  font: inherit;
+  resize: none;
+}
+
+#capture-hint,
+.capture-actions,
+#status {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+#capture-hint {
+  margin-block-start: 8px;
+}
+
+.capture-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-block-start: 16px;
+}
+
+#signed-out {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding-inline: 8px;
+  text-align: center;
+}
+
+.login-logo {
+  inline-size: 64px;
+  block-size: 64px;
+  border-radius: 13px;
+  background: var(--accent);
+  color: var(--input-background);
+}
+
+#signed-out h1 {
+  font-size: 26px;
+}
+
+#signed-out p {
+  color: var(--muted);
+}
+
+#sign-in {
+  inline-size: 100%;
+  margin-block-start: 12px;
 }
 
 button {
-  padding: 0.5rem 1rem;
-  border: 1px solid currentcolor;
-  border-radius: 0.5rem;
-  background: #ffc83d;
-  color: inherit;
+  min-inline-size: 48px;
+  min-block-size: 48px;
+  padding: 8px 20px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--input-background);
   font: inherit;
+  font-weight: 700;
   cursor: pointer;
 }
 
-button:focus-visible {
-  outline: 2px solid currentcolor;
+button:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent);
   outline-offset: 3px;
 }
 
@@ -34,22 +155,7 @@ button:disabled {
   cursor: default;
 }
 
-textarea {
-  box-sizing: border-box;
-  inline-size: 100%;
-  margin-block-end: 0.5rem;
-  padding: 0.5rem;
-  border: 1px solid currentcolor;
-  border-radius: 0.5rem;
-  color: inherit;
-  font: inherit;
-  resize: vertical;
-}
-
-p {
-  margin: 0;
-}
-
-main > :not([hidden]) ~ p:not(:empty) {
-  margin-block-start: 0.5rem;
+#status {
+  min-block-size: 36px;
+  margin-block-start: 8px;
 }

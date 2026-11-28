@@ -6,13 +6,50 @@
     <title>Futaba</title>
   </head>
   <body>
+    <svg width="0" height="0" class="logo-definitions" aria-hidden="true">
+      <path
+        id="sprout"
+        fill="currentColor"
+        d="M50,60 C36,60 28,50 28,37 C41,35 50,41 54,51 C58,41 67,35 80,37 C80,50 72,60 58,60 L58,70 C58,72 56,74 54,74 C52,74 50,72 50,70 Z"
+      />
+    </svg>
     <main>
-      <button type="button" id="sign-in" disabled>Googleでログイン</button>
+      <section id="signed-out" hidden>
+        <svg class="login-logo" viewBox="14 14 80 80" aria-hidden="true">
+          <use href="#sprout" />
+        </svg>
+        <h1>Futaba</h1>
+        <p>
+          スマホのアプリと同じ Google
+          アカウントでログインすると、ここから書いたメモが届きます。
+        </p>
+        <button type="button" id="sign-in" disabled>Googleでログイン</button>
+      </section>
       <form id="capture" hidden>
-        <textarea id="note" aria-label="メモ" rows="5"></textarea>
-        <button id="save" type="submit" disabled>追加</button>
+        <h1 class="capture-heading">
+          <svg viewBox="28 29 52 52" aria-hidden="true">
+            <use href="#sprout" />
+          </svg>
+          Futaba
+        </h1>
+        <label for="note">新しいアイデア</label>
+        <textarea id="note" aria-describedby="capture-hint"></textarea>
+        <p id="capture-hint">
+          選んだ文字とページの URL が入ります · #ラベル で分類
+        </p>
+        <div class="capture-actions">
+          <span><kbd>Ctrl+Enter</kbd> で追加</span>
+          <button
+            id="save"
+            type="submit"
+            aria-keyshortcuts="Control+Enter"
+            disabled
+          >
+            追加
+          </button>
+        </div>
       </form>
-      <p id="status" role="status">ログイン状態を確認しています…</p>
+      <p id="status" role="status"></p>
     </main>
     <script type="module" src="./main.ts"></script>
   </body>

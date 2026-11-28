@@ -6,6 +6,7 @@ import {
 import { currentUser, signIn } from '../lib/firebase';
 import { addNote } from '../lib/notes';
 import { pendingCapture } from '../lib/pending-capture';
+import { signedInFlag } from '../lib/signed-in-flag';
 
 const captureMenuId = 'futaba:add-note';
 let pendingCaptureUpdate = Promise.resolve();
@@ -63,8 +64,17 @@ async function saveFromPopup(text: string, pending: unknown): Promise<void> {
   }
 }
 
+async function signInFromPopup(): Promise<void> {
+  await signIn();
+  try {
+    await signedInFlag.setValue(true);
+  } catch (error) {
+    console.error('Futaba could not store the sign-in flag.', error);
+  }
+}
+
 export default defineBackground(() => {
-  let activeSignIn: ReturnType<typeof signIn> | undefined;
+  let activeSignIn: Promise<void> | undefined;
 
   browser.runtime.onInstalled.addListener(() => {
     browser.contextMenus.removeAll(() => {
@@ -108,7 +118,8 @@ export default defineBackground(() => {
         typeof message === 'object' &&
         message !== null &&
         'type' in message &&
-        message.type === 'futaba:save-note'
+        (message.type === 'futaba:save-note' ||
+          message.type === 'futaba:defer-capture')
       ) {
         if (
           !('text' in message) ||
@@ -118,13 +129,20 @@ export default defineBackground(() => {
           sendResponse(false);
           return;
         }
-        void saveFromPopup(
-          message.text,
-          'pending' in message ? message.pending : null,
-        ).then(
+        const text = message.text;
+        const result =
+          message.type === 'futaba:defer-capture'
+            ? updatePendingCapture((existing) =>
+                appendPendingCapture(existing, text),
+              )
+            : saveFromPopup(
+                text,
+                'pending' in message ? message.pending : null,
+              );
+        void result.then(
           () => sendResponse(true),
           (error: unknown) => {
-            console.error('Futaba could not save the note.', error);
+            console.error('Futaba could not save the capture.', error);
             sendResponse(false);
           },
         );
@@ -135,7 +153,7 @@ export default defineBackground(() => {
       }
 
       // The popup can close when Chrome opens the Google sign-in window.
-      activeSignIn ??= signIn().finally(() => {
+      activeSignIn ??= signInFromPopup().finally(() => {
         activeSignIn = undefined;
       });
       void activeSignIn.then(
