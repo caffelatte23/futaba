@@ -56,6 +56,10 @@ class AuthRepository
         private val firestore: FirebaseFirestore,
     ) {
         private val signInLock = Mutex()
+        private val flight = SingleFlight()
+
+        /** True from the account picker until the SDK sign-in task has finished. */
+        val signingIn: StateFlow<Boolean> = flight.active
         private val session = AuthSession(auth.currentUser?.toStored())
         val uid: StateFlow<String?> = session.uid
         val account: StateFlow<AuthAccount?> = session.account
@@ -69,8 +73,12 @@ class AuthRepository
 
         private fun publishUser() = session.publish(auth.currentUser?.toStored())
 
-        @Suppress("TooGenericExceptionCaught") // Credentials and Firebase expose different failure types.
         suspend fun signInWithGoogle(context: Context): LinkResult =
+            // Re-entry (e.g. a recreated screen) is ignored until the earlier sign-in, including its SDK task, ends.
+            flight.run(LinkResult.Cancelled) { signInWithGoogleOnce(context) }
+
+        @Suppress("TooGenericExceptionCaught") // Credentials and Firebase expose different failure types.
+        private suspend fun signInWithGoogleOnce(context: Context): LinkResult =
             try {
                 signInGoogleCredential(getGoogleCredential(context)) { getGoogleCredential(context) }
             } catch (_: GetCredentialCancellationException) {

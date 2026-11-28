@@ -3,6 +3,7 @@ package io.github.caffelatte23.futaba.feature.login
 import android.content.ContextWrapper
 import com.google.common.truth.Truth.assertThat
 import io.github.caffelatte23.futaba.core.data.LinkResult
+import io.github.caffelatte23.futaba.core.data.SingleFlight
 import io.github.caffelatte23.futaba.testing.MainDispatcherRule
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -14,13 +15,14 @@ class LoginViewModelTest {
     @get:Rule val main = MainDispatcherRule()
 
     private val context = ContextWrapper(null)
+    private val gate = SingleFlight()
 
     @Test
     fun failedSignInShowsMessageAndKeepsButtonUsable() =
         runTest {
             var calls = 0
             val vm =
-                LoginViewModel(MutableStateFlow(true)) {
+                LoginViewModel(MutableStateFlow(true), gate.active) {
                     calls++
                     LinkResult.Failed("failed")
                 }
@@ -34,7 +36,11 @@ class LoginViewModelTest {
     @Test
     fun cancelledShowsNoMessage() =
         runTest {
-            val vm = LoginViewModel(MutableStateFlow(true)) { LinkResult.Cancelled }
+            val vm =
+                LoginViewModel(
+                    MutableStateFlow(true),
+                    gate.active,
+                ) { gate.run(LinkResult.Cancelled) { LinkResult.Cancelled } }
             vm.signIn(context)
             assertThat(vm.state.value.message).isNull()
             assertThat(vm.state.value.busy).isFalse()
@@ -46,7 +52,7 @@ class LoginViewModelTest {
             val online = MutableStateFlow(false)
             var calls = 0
             val vm =
-                LoginViewModel(online) {
+                LoginViewModel(online, gate.active) {
                     calls++
                     LinkResult.Cancelled
                 }
@@ -63,20 +69,45 @@ class LoginViewModelTest {
     @Test
     fun noSecondSignInWhileFirstIsPending() =
         runTest {
-            val gate = CompletableDeferred<LinkResult>()
+            val pending = CompletableDeferred<LinkResult>()
             var calls = 0
             val vm =
-                LoginViewModel(MutableStateFlow(true)) {
-                    calls++
-                    gate.await()
+                LoginViewModel(MutableStateFlow(true), gate.active) {
+                    this@LoginViewModelTest.gate.run(LinkResult.Cancelled) {
+                        calls++
+                        pending.await()
+                    }
                 }
             vm.signIn(context)
             assertThat(vm.state.value.busy).isTrue()
             vm.signIn(context)
             assertThat(calls).isEqualTo(1)
-            gate.complete(LinkResult.Cancelled)
+            pending.complete(LinkResult.Cancelled)
             assertThat(vm.state.value.busy).isFalse()
             vm.signIn(context)
+            assertThat(calls).isEqualTo(2)
+        }
+
+    @Test
+    fun recreatedViewModelCannotStartAnotherSignInWhilePending() =
+        runTest {
+            val gate = SingleFlight()
+            val release = CompletableDeferred<LinkResult>()
+            var calls = 0
+            val signIn: suspend (android.content.Context) -> LinkResult = {
+                gate.run(LinkResult.Cancelled) {
+                    calls++
+                    release.await()
+                }
+            }
+            LoginViewModel(MutableStateFlow(true), gate.active, signIn).signIn(context)
+            val recreated = LoginViewModel(MutableStateFlow(true), gate.active, signIn)
+            assertThat(recreated.state.value.busy).isTrue()
+            recreated.signIn(context)
+            assertThat(calls).isEqualTo(1)
+            release.complete(LinkResult.Cancelled)
+            assertThat(recreated.state.value.busy).isFalse()
+            recreated.signIn(context)
             assertThat(calls).isEqualTo(2)
         }
 }

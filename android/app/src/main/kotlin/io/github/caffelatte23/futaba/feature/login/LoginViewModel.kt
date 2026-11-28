@@ -23,14 +23,14 @@ data class LoginState(
     val offline: Boolean = false,
 )
 
-private data class Operation(
-    val busy: Boolean = false,
-    val message: String? = null,
-)
-
+/**
+ * [signingIn] is owned by the singleton repository, so a recreated ViewModel still sees an
+ * earlier sign-in that hasn't finished.
+ */
 @HiltViewModel
 class LoginViewModel(
     online: Flow<Boolean>,
+    private val signingIn: StateFlow<Boolean>,
     private val signInWithGoogle: suspend (Context) -> LinkResult,
 ) : ViewModel() {
     @Inject
@@ -38,22 +38,22 @@ class LoginViewModel(
         auth: AuthRepository,
         @ApplicationContext context: Context,
     ) :
-        this(onlineFlow(context), auth::signInWithGoogle)
+        this(onlineFlow(context), auth.signingIn, auth::signInWithGoogle)
 
-    private val operation = MutableStateFlow(Operation())
+    private val message = MutableStateFlow<String?>(null)
     private val onlineNow = online.stateIn(viewModelScope, SharingStarted.Eagerly, true)
 
     val state: StateFlow<LoginState> =
-        combine(operation, onlineNow) { op, on -> LoginState(op.busy, op.message, !on) }
+        combine(signingIn, message, onlineNow) { busy, msg, on -> LoginState(busy, msg, !on) }
             .stateIn(viewModelScope, SharingStarted.Eagerly, LoginState())
 
     fun signIn(context: Context) {
         // Offline: the screen already shows the notice; don't start the account picker.
-        if (operation.value.busy || !onlineNow.value) return
-        operation.value = Operation(busy = true)
+        if (signingIn.value || !onlineNow.value) return
+        message.value = null
         viewModelScope.launch {
             val result = signInWithGoogle(context)
-            operation.value = Operation(message = (result as? LinkResult.Failed)?.message)
+            message.value = (result as? LinkResult.Failed)?.message
         }
     }
 }
