@@ -160,6 +160,11 @@ service cloud.firestore {
 - ログイン: `chrome.identity.launchWebAuthFlow` で Google ID トークン → `signInWithCredential`。Androidでリンク済みのGoogleアカウントなら同じuid
 - 一覧表示は v1 では作らない
 
+## 配布（v1・2026-11-28 決定）
+
+- Android: 署名済みリリース APK を端末へ直接インストール（Play ストアには出さない）。署名鍵はリポジトリ外で利用者が管理し、`android/keystore.properties`（gitignore）から読む。リリース鍵の SHA-1 を Firebase の Android アプリに登録する
+- Chrome 拡張: パッケージ化せずに読み込む（`extension/.output/chrome-mv3`、拡張 ID はマニフェストの key で固定）
+
 ## v1でやらないこと
 
 フォルダ／ノートブック・リッチテキスト・画像添付・共有や共同編集・リマインダー・自動分類・拡張での一覧表示。必要になったら足す。

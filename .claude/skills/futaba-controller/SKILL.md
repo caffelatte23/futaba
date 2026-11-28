@@ -17,9 +17,10 @@ description: Futaba の実装を調整役（Opus）として進めるときの�
 2. brief を抜き出し、指示に「`futaba-task` を読む」「端末を使うか否か」「触ってよい範囲（並行作業との衝突回避）」を必ず書く。
 3. Codex は `codex exec --dangerously-bypass-approvals-and-sandbox -C <worktree> -o <final.md>` をバックグラウンドで実行し、`-o` のファイルを見張る処理を別に付ける（プロセスが終了しないことがある）。利用上限に達したら時刻を記録し、解除後に再開する。
 4. レビュー → CHANGES_REQUESTED なら同じ実装担当に修正（3回まで）、4回目からは別モデルに交代。受け入れる残余リスクは台帳に Ruling として記録し、次のレビューに「再提起しない」と渡す。
-5. Firestore・端末に関わる変更は、他のエージェントが端末を使っていないときに調整役が `pnpm check:device` を走らせる（instrumentation の衝突・アプリの再インストールで落ちるため直列化）。
-6. main に rebase → `ship.sh`（push で pre-push 検査 → PR 作成 `Closes #N`、実機確認が残るものは `CLOSE=Refs` → レビュー記録をコメント → squash マージ）。
-7. **チケット完了時に skills を見直す（必須）**: そのタスクで新しく繰り返し起きた問題・指示を `futaba-task` / `futaba-review` / この skill / AGENTS.md に反映するか判断し、台帳に「skills 見直し: 変更なし / 変更内容」を1行残す。静的に検査できるものは skills ではなく検査（lint・`scripts/`）に足す。
+5. リリース前（R8 やビルド設定の変更時も）は、`assembleRelease` をデバッグ鍵で仮署名して実機で起動し `adb logcat -b crash` が空であることを確認する（デバッグ版では出ない R8 の不具合があったため、#51）。
+6. Firestore・端末に関わる変更は、他のエージェントが端末を使っていないときに調整役が `pnpm check:device` を走らせる（instrumentation の衝突・アプリの再インストールで落ちるため直列化）。
+7. main に rebase → `ship.sh`（push で pre-push 検査 → PR 作成 `Closes #N`、実機確認が残るものは `CLOSE=Refs` → レビュー記録をコメント → squash マージ）。
+8. **チケット完了時に skills を見直す（必須）**: そのタスクで新しく繰り返し起きた問題・指示を `futaba-task` / `futaba-review` / この skill / AGENTS.md に反映するか判断し、台帳に「skills 見直し: 変更なし / 変更内容」を1行残す。静的に検査できるものは skills ではなく検査（lint・`scripts/`）に足す。
 
 ## 運用上の決まり
 
