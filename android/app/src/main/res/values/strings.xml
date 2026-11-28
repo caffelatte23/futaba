@@ -7,7 +7,8 @@
     <string name="share_added">Futabaに追加しました</string>
     <string name="share_draft_saved">下書きに保存しました</string>
     <string name="share_draft_failed">下書きを保存できませんでした</string>
-    <string name="capture_tile_label">アイデアを書く</string>
+    <string name="capture_tile_label">Futaba</string>
+    <string name="capture_tile_content_description">Futaba：アイデアを書く</string>
     <string name="settings_title">設定</string>
     <string name="settings_back">戻る</string>
     <string name="settings_sync">同期</string>
